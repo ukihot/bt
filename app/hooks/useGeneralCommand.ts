@@ -190,7 +190,7 @@ export const useGeneralCommand = (
                     return;
                 }
                 // まれに異常：懺悔モードへ転落
-                if (Math.random() < 1.005) {
+                if (Math.random() < 0.005) {
                     setMode(TerminalSectionId.Zange);
                     addOutput(USAGE_DESCENT_INTO_ZANGE, LogLevel.ERROR);
                     return;
