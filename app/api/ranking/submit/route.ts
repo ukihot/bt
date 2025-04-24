@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
+import { DEFAULT_CASH } from "@/app/context/TerminalContext";
 
 const TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000;
 
@@ -51,12 +52,13 @@ export async function POST(req: Request) {
         const [row] =
             await sql`SELECT score FROM results ORDER BY score ASC LIMIT 1`;
         const lowest = row?.score ?? Number.NEGATIVE_INFINITY;
-        const canEnter = body.score > lowest;
+        const currentScore = body.score - DEFAULT_CASH;
+        const canEnter = currentScore > lowest;
 
         if (canEnter) {
             await sql`
                 INSERT INTO results (name, score, recorded_at)
-                VALUES (${body.name}, ${body.score}, ${new Date().toISOString()})
+                VALUES (${body.name}, ${currentScore}, ${new Date().toISOString()})
             `;
         }
 

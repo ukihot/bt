@@ -1,35 +1,34 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import Cookies from "js-cookie";
+import { signInWithX } from "@/app/actions/signInWithX";
 
 export function XAuthButton() {
-    const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const session = useSession();
     const router = useRouter();
 
-    useEffect(() => {
-        const token = Cookies.get("x_access_token") ?? "";
-        setIsAuthenticated(token.length > 0);
-    }, []);
-
-    const handleClick = useCallback(() => {
-        if (isAuthenticated) {
+    const handleClick = async () => {
+        if (session.status === "authenticated") {
+            // 認証済みの場合は/we-are-openに遷移
             router.push("/we-are-open");
         } else {
-            window.location.href = "/api/auth/x";
+            // 未認証の場合はsignInWithXを呼び出し
+            await signInWithX();
         }
-    }, [isAuthenticated, router]);
+    };
 
     return (
         <button
             type="button"
             onClick={handleClick}
-            className={`!px-6 !py-2 transition ${
-                isAuthenticated ? "hover:!bg-green-600" : "hover:!bg-blue-600"
+            className={`px-6 py-2 transition ${
+                session.status === "authenticated"
+                    ? "hover:bg-green-600"
+                    : "hover:bg-blue-600"
             }`}
         >
-            {isAuthenticated ? "OPEN UP" : "Sign in with X"}
+            {session.status === "authenticated" ? "OPEN UP" : "Sign in with X"}
         </button>
     );
 }
