@@ -2,8 +2,8 @@
 
 import dynamic from "next/dynamic";
 import { useFetch } from "./hooks/useFetch";
-import { NameForm } from "./components/NameForm";
 import type { RankingItem } from "./home.types";
+import { XAuthButton } from "./components/XAuthButton";
 
 const RankingTable = dynamic(
     () => import("./components/RankingTable").then((mod) => mod.RankingTable),
@@ -27,7 +27,7 @@ export default function RankingPage() {
     return (
         <div className="flex min-h-screen flex-col items-center justify-center gap-20 p-4 text-gray-100">
             {ranking && <RankingTable items={ranking} />}
-            <NameForm />
+            <XAuthButton />
         </div>
     );
 }

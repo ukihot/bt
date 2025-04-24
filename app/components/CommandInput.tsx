@@ -34,7 +34,6 @@ const PromptDisplay = ({
     const username = searchParams.get("name");
     const router = useRouter();
 
-    // username が null の場合、リダイレクト
     useEffect(() => {
         if (!username || username.trim() === "") {
             router.replace("/");
@@ -42,7 +41,7 @@ const PromptDisplay = ({
     }, [username, router]);
 
     if (!username || username.trim() === "") {
-        return null; // username がない場合、何も表示しない
+        return null;
     }
 
     return (
@@ -69,7 +68,6 @@ export const CommandInput = ({
 
     const { cash, isGameOver } = context;
 
-    // 入力フィールドにフォーカス
     useEffect(() => {
         const handleClick = (e: MouseEvent) => {
             e.preventDefault();
@@ -86,9 +84,50 @@ export const CommandInput = ({
         };
     }, [inputRef, isInputEnabled]);
 
+    // 修正されたスコア送信処理
+    useEffect(() => {
+        if (!isGameOver) return;
+
+        const params = new URLSearchParams(window.location.search);
+        const username = params.get("name");
+        if (!username || username.trim() === "") return;
+
+        const timestamp = new Date().toISOString();
+        const payload = {
+            name: username,
+            score: cash,
+        };
+
+        const sendScore = async () => {
+            try {
+                const res = await fetch("/api/ranking/submit", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "x-timestamp": timestamp,
+                    },
+                    body: JSON.stringify(payload),
+                });
+
+                if (!res.ok) {
+                    const error = await res.json();
+                    alert(`Failed to send score: ${error.error}`);
+                }
+            } catch (err) {
+                if (err instanceof Error) {
+                    alert(`An error has occurred: ${err.message}`);
+                } else {
+                    alert("An unexpected error has occurred.");
+                }
+            }
+        };
+
+        void sendScore();
+    }, [isGameOver, cash]);
+
     return (
         <div className="mt-1.5 flex w-full font-bold">
-            <Suspense fallback={<div>Loading prompt...</div>}>
+            <Suspense fallback={<div>Loading prompt…</div>}>
                 <PromptDisplay cash={cash} mode={mode} />
             </Suspense>
             <input
