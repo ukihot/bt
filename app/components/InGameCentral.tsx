@@ -181,7 +181,7 @@ export const InGameCentral = () => {
                     // 異常時
                     default:
                         handleTrouble(terminal);
-                        if (Math.random() < terminal.troubleProbability) {
+                        if (Math.random() < terminal.troubleProbability ** 2) {
                             // 不吉イベント
                             handleOminous(terminal);
                         }

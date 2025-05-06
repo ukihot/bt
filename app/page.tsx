@@ -1,9 +1,13 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useFetch } from "./hooks/useFetch";
-import type { RankingItem } from "./home.types";
+import GifScatter from "./components/GifScatter";
+import RealNewsTrain from "./components/RealNewsTrain";
+import { Sparkles } from "./components/Sparkles";
+import TitleTelop from "./components/TitleTelop";
 import { XAuthButton } from "./components/XAuthButton";
+import type { RankingItem } from "./home.types";
+import { useFetch } from "./hooks/useFetch";
 
 const RankingTable = dynamic(
     () => import("./components/RankingTable").then((mod) => mod.RankingTable),
@@ -25,7 +29,11 @@ export default function RankingPage() {
     }
 
     return (
-        <div className="flex min-h-screen flex-col items-center justify-center gap-20 p-4 text-gray-100">
+        <div className="relative flex min-h-screen flex-col items-center justify-center gap-20 overflow-hidden p-4 text-gray-100">
+            <Sparkles />
+            <GifScatter count={40} />
+            <RealNewsTrain />
+            <TitleTelop />
             {ranking && <RankingTable items={ranking} />}
             <XAuthButton />
         </div>

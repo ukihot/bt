@@ -27,7 +27,7 @@ export default function WeAreOpenPage() {
         <TerminalProvider>
             <BackgroundConsole />
             <InGameCentral />
-            <Rain />
+            <Rain whetherCoefficient={5} />
         </TerminalProvider>
     );
 }

@@ -245,8 +245,8 @@ export const USAGE_TRAP_FAILURE = (errorMessage: string): UsageCode => ({
 });
 
 export const USAGE_TRAP_SUCCESS = {
-    ja: "罠が成功し、ねずみを1匹捕まえました！",
-    en: "The trap succeeded, and 1 rodent was caught!",
+    ja: "罠が成功し、ネズミを半分捕まえました！",
+    en: "The trap succeeded, and half of the rodents were caught!",
 };
 
 export const USAGE_DESCENT_INTO_ZANGE: UsageCode = {

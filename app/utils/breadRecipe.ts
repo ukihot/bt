@@ -57,3 +57,5 @@ export const breadRecipes = [
         malt: 0,
     },
 ];
+
+export const DEFAULT_NIGIWAI = 1.0;

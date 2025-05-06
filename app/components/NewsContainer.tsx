@@ -43,7 +43,10 @@ export const NewsContainer = ({
             className="window-body max-h-[340px] w-[550px] overflow-y-scroll text-base"
         >
             {news.map((item) => (
-                <div key={item.id} className="flex flex-row space-x-4">
+                <div
+                    key={item.id}
+                    className="flex flex-row space-x-4 font-extrabold"
+                >
                     <p className="min-w-max flex-shrink-0 whitespace-nowrap">
                         [&nbsp;{item.datetime.toISOString()}&nbsp;]
                     </p>

@@ -29,7 +29,7 @@ export default function RootLayout({
             </head>
             <body className={`${dotGothic16.className} antialiased`}>
                 <Providers>
-                    <main>{children}</main>
+                    <main className="bg-black">{children}</main>
                     <SpeedInsights />
                 </Providers>
             </body>

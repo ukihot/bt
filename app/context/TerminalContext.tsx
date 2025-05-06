@@ -17,9 +17,8 @@ import {
     type TransactionType,
     type UsageCode,
 } from "../bt.types";
-import { DEFAULT_INGREDIENT_COST } from "../utils/breadRecipe";
+import { DEFAULT_INGREDIENT_COST, DEFAULT_NIGIWAI } from "../utils/breadRecipe";
 import { mapAndUpdate } from "../utils/news";
-import { USAGE_TRAP_SUCCESS } from "../utils/usage/usageGeneral";
 
 export interface TerminalContextType {
     terminals: Terminal[];
@@ -123,7 +122,7 @@ export const TerminalProvider = ({
     );
     const [language, setLanguage] = useState<"ja" | "en">("ja");
     const [bread, setBread] = useState<Bread[]>([]); // 作業途中のパンの状態
-    const [nigiwai, setNigiwai] = useState<number>(1.0);
+    const [nigiwai, setNigiwai] = useState<number>(DEFAULT_NIGIWAI);
     const [productionSpeed, setProductionSpeed] = useState<number>(
         DEFAULT_PRODUCTION_SPEED,
     );
@@ -686,14 +685,23 @@ export const TerminalProvider = ({
                         (terminal.barometer.rodentCount +
                             terminal.barometer.trap) *
                         0.02;
+
                     if (
                         terminal.barometer.rodentCount > 0 &&
                         terminal.barometer.trap > 0 &&
                         Math.random() < chance
                     ) {
+                        const currentRodents = terminal.barometer.rodentCount;
+                        const rodentsCaught =
+                            currentRodents === 1
+                                ? 1 // 残り1匹なら確実に0にする
+                                : Math.round(currentRodents / 2); // 半減（四捨五入）
                         updateTrap(terminal.id, -1); // 罠を減らす
-                        decreaseRodents(terminal.id, 1); // ﾈｽﾞﾐを減らす
-                        addNews(terminal.id, USAGE_TRAP_SUCCESS);
+                        decreaseRodents(terminal.id, rodentsCaught); // ネズミを減らす
+                        addNews(terminal.id, {
+                            ja: "罠が成功し、ネズミを半分捕まえました！",
+                            en: "The trap succeeded, and half of the rodents were caught!",
+                        });
                     }
                     return terminal;
                 }),
