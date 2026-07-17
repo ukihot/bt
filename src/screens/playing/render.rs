@@ -31,6 +31,23 @@ pub(super) fn container_height_px(capacity: usize) -> f32 {
     capacity as f32 * LOG_FONT_SIZE * LINE_HEIGHT_RATIO
 }
 
+/// A flex item's default `min_width` (`Val::Auto`) falls back to its
+/// content's own unbreakable width -- and every log line renders with
+/// `TextLayout::no_wrap()` (第3.1節: 1行=1件を画面上の見た目とも合わせる
+/// ため), so one long line (a rumor quoting a customer verbatim runs
+/// noticeably longer than this pane's other lines, e.g.) is exactly the kind
+/// of unbreakable content that can otherwise force its pane wider than its
+/// `flex_grow` share, skewing the whole 2x2/8:5 grid (第3.1節). Every
+/// width-bearing `Node` between the grid and an individual log line --
+/// pane boxes, their log containers (`setup::spawn_pane`), and each spawned
+/// line (`spawn::spawn_line_ui`) -- runs through this one function instead
+/// of re-deriving `min_width: Val::Px(0.0)` at each call site, so the
+/// invariant can't quietly go missing from just one of them.
+pub(super) fn shrinkable(mut node: Node) -> Node {
+    node.min_width = Val::Px(0.0);
+    node
+}
+
 /// Overwrites the leading `progress` fraction of `text` (by character count)
 /// with `DELETE_WIPE_GLYPH`, rounding up so any progress at all shows
 /// something immediately.

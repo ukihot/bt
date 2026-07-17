@@ -8,7 +8,8 @@ pub(super) struct PendingLine {
     pub(super) entity: Entity,
     pub(super) text: String,
     pub(super) classification: Classification,
-    pub(super) correct_verb: Option<Verb>,
+    /// Mirrors `LogLine::relief` -- see `domain::resolve`.
+    pub(super) relief: f32,
     /// What the player has marked this line as, if anything. Purely a mark
     /// while the line is still reachable -- it has no effect on its own.
     pub(super) mark: Option<Verb>,
@@ -90,7 +91,7 @@ mod tests {
             entity: Entity::PLACEHOLDER,
             text: text.to_string(),
             classification: Classification::Normal,
-            correct_verb: None,
+            relief: 0.0,
             mark: None,
             delete_wipe: 0.0,
         }

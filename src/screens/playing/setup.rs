@@ -6,7 +6,7 @@ use super::intrusion::{ActiveIntrusion, IntrusionSlot};
 use super::pane::{ActivePane, PaneRuntime};
 use super::pause::{PauseRoot, PauseState};
 use super::pending::Pending;
-use super::render::{CURSOR_BLANK, PaneHeader, container_height_px};
+use super::render::{CURSOR_BLANK, PaneHeader, container_height_px, shrinkable};
 use super::spawn::LogUi;
 use crate::domain::{LineFont, Pane, Phase};
 use crate::fonts::Fonts;
@@ -55,14 +55,14 @@ fn spawn_pane(
         .id();
 
     let container = commands
-        .spawn(Node {
+        .spawn(shrinkable(Node {
             width: Val::Percent(100.0),
             height: Val::Px(container_height_px(capacity)),
             flex_direction: FlexDirection::Column,
             justify_content: JustifyContent::FlexEnd,
             overflow: Overflow::clip(),
             ..default()
-        })
+        }))
         .id();
 
     let entity = commands
@@ -79,16 +79,20 @@ fn spawn_pane(
 }
 
 fn split_pane_node() -> Node {
-    Node {
+    shrinkable(Node {
         // A zero basis forces `Outside`/`Floor` to split their row exactly
         // in half regardless of how much text either happens to hold --
         // otherwise a longer line could nudge the grid off its 2x2 shape.
+        // That intent only holds if `shrinkable` also strips the box's own
+        // content-based minimum width, though -- otherwise an unbreakable
+        // long line still wins over the equal-split flex-basis (see
+        // `render::shrinkable`).
         flex_grow: 1.0,
         flex_basis: Val::Percent(0.0),
         flex_direction: FlexDirection::Column,
         row_gap: px(4),
         ..default()
-    }
+    })
 }
 
 pub(super) fn setup(mut commands: Commands, fonts: Res<Fonts>, game_data: Res<GameData>) {
@@ -132,13 +136,13 @@ pub(super) fn setup(mut commands: Commands, fonts: Res<Fonts>, game_data: Res<Ga
         &fonts,
         Pane::Kiln,
         game_data.phase,
-        Node {
+        shrinkable(Node {
             width: Val::Percent(100.0),
             flex_grow: Pane::Kiln.capacity() as f32,
             flex_direction: FlexDirection::Column,
             row_gap: px(4),
             ..default()
-        },
+        }),
     );
     let outside =
         spawn_pane(&mut commands, &fonts, Pane::Outside, game_data.phase, split_pane_node());

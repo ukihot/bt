@@ -16,6 +16,10 @@ pub struct GameData {
     pub phase: Phase,
     pub clock: DayClock,
     pub zone: Zone,
+    /// 禁忌集(第5節)のうち、今回のランで実際に語られたものすべてを発話順
+    /// に記録した台帳 -- 全画面が同じ表を参照する(第3.7節と同じ理由: 有効な
+    /// ルールは店にひとつしかない)ので `PaneRuntime` ではなくここに置く。
+    pub rule_ledger: domain::RuleLedger,
     pub corruption: f32,
     pub income: i64,
     pub player_name: String,
@@ -41,6 +45,7 @@ impl GameData {
             phase: Phase::Prep,
             clock: DayClock::default(),
             zone: Zone::Perimeter,
+            rule_ledger: domain::RuleLedger::new(),
             corruption: 0.0,
             income: 0,
             player_name: String::new(),

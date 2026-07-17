@@ -18,6 +18,10 @@ pub fn fill_n(template: &str, n: u32) -> String {
     template.replace("{n}", &n.to_string())
 }
 
+pub fn fill_name(template: &str, name: &str) -> String {
+    template.replace("{name}", name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

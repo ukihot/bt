@@ -70,7 +70,7 @@ pub(super) fn resolve_intrusion(
         return;
     }
 
-    apply_outcome(&mut game_data, resolve(Classification::ShouldNotReact, None, action));
+    apply_outcome(&mut game_data, resolve(Classification::ShouldNotReact, action, 0.0));
     active.0 = None;
     if let Ok(mut text) = slot.single_mut() {
         text.0 = String::new();

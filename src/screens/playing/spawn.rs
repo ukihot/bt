@@ -5,7 +5,7 @@ use bevy::text::FontSize;
 
 use super::pane::PaneRuntime;
 use super::pending::{Pending, PendingLine};
-use super::render::{CURSOR_BLANK, LOG_FONT_SIZE, MARK_BLANK, render_resolved_line};
+use super::render::{CURSOR_BLANK, LOG_FONT_SIZE, MARK_BLANK, render_resolved_line, shrinkable};
 use crate::domain::{self, Classification, LogLine, Pane};
 use crate::fonts::Fonts;
 use crate::game_data::GameData;
@@ -41,6 +41,9 @@ pub(super) fn spawn_line_ui(
                 ..default()
             },
             TextColor(FG),
+            // Every spawned line gets its own width-safe `Node` too, not
+            // just its ancestors -- see `render::shrinkable`.
+            shrinkable(Node { width: Val::Percent(100.0), ..default() }),
         ))
         .id();
     commands.entity(log_ui.container).add_child(entity);
@@ -63,13 +66,25 @@ pub(super) fn phase_tick(
     mut panes: Query<&mut PaneRuntime>,
 ) {
     let wraps = game_data.clock.advance(time.delta_secs());
-    for _ in 0..wraps {
-        game_data.day += 1;
-        game_data.zone = game_data.zone.next();
-        let day = game_data.day;
-        // 日替わりの記帳は、店主の記録である焼成室にだけ流れる(第5節)。
-        if let Some(mut kiln) = panes.iter_mut().find(|p| p.pane == Pane::Kiln) {
-            kiln.pending_scripted.push_back(domain::day_marker(day));
+    if wraps > 0 {
+        let mut rng = rand::rng();
+        for _ in 0..wraps {
+            game_data.day += 1;
+            game_data.zone = game_data.zone.next();
+            let day = game_data.day;
+            // ルールの効果は日をまたぐたびに白紙に戻る(CLAUDE.md §3.4) --
+            // Cast(誰が何を言うか)はそのまま、聞いた噂の履歴だけが消える。
+            game_data.rule_ledger.reset_day();
+            // 日替わりの記帳は、店主の記録である焼成室にだけ流れる(第5節)。
+            if let Some(mut kiln) = panes.iter_mut().find(|p| p.pane == Pane::Kiln) {
+                kiln.pending_scripted.push_back(domain::day_marker(day));
+            }
+            // 「昨日までの制約が明けた」ことをほのめかす一言は、ルール変更の
+            // 発信源である売り場に流す(第3.4節)。
+            if let Some(mut floor) = panes.iter_mut().find(|p| p.pane == Pane::Floor) {
+                let notice = domain::rule_reset_notice(game_data.clock, &mut rng);
+                floor.pending_scripted.push_back(notice);
+            }
         }
     }
 
@@ -107,12 +122,18 @@ pub(super) fn line_spawn(
             scripted
         } else {
             let last_normal = runtime.last_normal_line.clone();
+            let clock = game_data.clock;
+            let zone = game_data.zone;
+            let day = game_data.day;
+            let corruption = game_data.corruption;
             domain::generate(
                 runtime.pane,
-                game_data.clock,
-                game_data.zone,
-                game_data.day,
+                clock,
+                zone,
+                day,
                 last_normal.as_deref(),
+                &mut game_data.rule_ledger,
+                corruption,
                 &mut rng,
             )
         };
@@ -131,7 +152,7 @@ pub(super) fn line_spawn(
                 entity,
                 text: line.text.clone(),
                 classification: line.classification,
-                correct_verb: line.correct_verb,
+                relief: line.relief,
                 mark: None,
                 delete_wipe: 0.0,
             };
@@ -139,8 +160,7 @@ pub(super) fn line_spawn(
                 if let Ok(mut text) = texts.get_mut(expired.entity) {
                     text.0 = render_resolved_line(&expired);
                 }
-                let outcome =
-                    domain::resolve(expired.classification, expired.correct_verb, expired.mark);
+                let outcome = domain::resolve(expired.classification, expired.mark, expired.relief);
                 let was_mistake = outcome.corruption > 0.0;
                 apply_outcome(&mut game_data, outcome);
                 if let Some(verb) = expired.mark

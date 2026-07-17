@@ -4,19 +4,25 @@
 //! so the rules here can be unit-tested without spinning up an `App`.
 
 mod clock;
+mod customer;
 mod generate;
 mod log_line;
 mod pane;
 mod phase;
+mod rules;
+mod rumors;
 mod threats;
 mod timestamp;
 mod verb;
 mod zone;
 
 pub use clock::DayClock;
-pub use generate::{corrupted_line, day_marker, generate, mistake_beat, name_call};
+pub use generate::{
+    corrupted_line, day_marker, generate, mistake_beat, name_call, rule_reset_notice,
+};
 pub use log_line::{Classification, LineFont, LogLine, Outcome, resolve};
 pub use pane::Pane;
 pub use phase::Phase;
+pub use rules::RuleLedger;
 pub use verb::Verb;
 pub use zone::Zone;
