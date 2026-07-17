@@ -3,6 +3,7 @@
 //! Deliberately free of Bevy ECS types (no `Component`/`Resource`/systems)
 //! so the rules here can be unit-tested without spinning up an `App`.
 
+mod clock;
 mod generate;
 mod log_line;
 mod pane;
@@ -12,6 +13,7 @@ mod timestamp;
 mod verb;
 mod zone;
 
+pub use clock::DayClock;
 pub use generate::{corrupted_line, day_marker, generate, mistake_beat, name_call};
 pub use log_line::{Classification, LineFont, LogLine, Outcome, resolve};
 pub use pane::Pane;

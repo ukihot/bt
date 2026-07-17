@@ -1,11 +1,12 @@
 use rand::RngExt;
 use rand::rngs::ThreadRng;
 
+use super::clock::DayClock;
 use super::log_line::{Classification, LineFont, LogLine};
 use super::pane::Pane;
 use super::phase::Phase;
 use super::threats::{RuleFlags, deviation_threat_line, repeat_threat_line};
-use super::timestamp::{even_minute, fill_n, hour_for, odd_minute, timestamp};
+use super::timestamp::{even_minute_of, fill_n, timestamp};
 use super::verb::Verb;
 use super::zone::Zone;
 
@@ -65,35 +66,35 @@ const CALL_BODIES: &[&str] = &[
     "{loc}から物音がした そちらを見ないで",
 ];
 
-fn normal_line(phase: Phase, rng: &mut ThreadRng) -> LogLine {
-    let h = hour_for(phase, rng);
-    let m = even_minute(rng);
+fn normal_line(clock: DayClock, rng: &mut ThreadRng) -> LogLine {
+    let h = clock.hour();
+    let m = even_minute_of(clock);
     let n = rng.random_range(1..30);
     let body = NORMAL_BODIES[rng.random_range(0..NORMAL_BODIES.len())];
     let text = format!("{} {}", timestamp(h, m), fill_n(body, n));
     LogLine::new(text, Classification::Normal, None)
 }
 
-fn baking_normal_line(phase: Phase, rng: &mut ThreadRng) -> LogLine {
-    let h = hour_for(phase, rng);
-    let m = even_minute(rng);
+fn baking_normal_line(clock: DayClock, rng: &mut ThreadRng) -> LogLine {
+    let h = clock.hour();
+    let m = even_minute_of(clock);
     let n = rng.random_range(1..20);
     let text = format!("{} バゲットが{}本 焼き上がり", timestamp(h, m), n);
     LogLine::new(text, Classification::Normal, None)
 }
 
-fn outside_normal_line(phase: Phase, rng: &mut ThreadRng) -> LogLine {
-    let h = hour_for(phase, rng);
-    let m = even_minute(rng);
+fn outside_normal_line(clock: DayClock, rng: &mut ThreadRng) -> LogLine {
+    let h = clock.hour();
+    let m = even_minute_of(clock);
     let n = rng.random_range(1..10);
     let body = OUTSIDE_BODIES[rng.random_range(0..OUTSIDE_BODIES.len())];
     let text = format!("{} {}", timestamp(h, m), fill_n(body, n));
     LogLine::new(text, Classification::Normal, None)
 }
 
-fn floor_normal_line(phase: Phase, rng: &mut ThreadRng) -> LogLine {
-    let h = hour_for(phase, rng);
-    let m = even_minute(rng);
+fn floor_normal_line(clock: DayClock, rng: &mut ThreadRng) -> LogLine {
+    let h = clock.hour();
+    let m = even_minute_of(clock);
     let n = rng.random_range(100..999);
     let body = FLOOR_BODIES[rng.random_range(0..FLOOR_BODIES.len())];
     let text = format!("{} {}", timestamp(h, m), fill_n(body, n));
@@ -103,17 +104,17 @@ fn floor_normal_line(phase: Phase, rng: &mut ThreadRng) -> LogLine {
 /// Each pane's ordinary business, in its own register (第4節). `Kiln`
 /// occasionally swaps in the baking-specific line, matching its historical
 /// 35% ratio; the other two panes just draw from their own body pool.
-fn normal_line_for(pane: Pane, phase: Phase, rng: &mut ThreadRng) -> LogLine {
+fn normal_line_for(pane: Pane, clock: DayClock, rng: &mut ThreadRng) -> LogLine {
     match pane {
         Pane::Kiln => {
             if rng.random_bool(0.35) {
-                baking_normal_line(phase, rng)
+                baking_normal_line(clock, rng)
             } else {
-                normal_line(phase, rng)
+                normal_line(clock, rng)
             }
         }
-        Pane::Outside => outside_normal_line(phase, rng),
-        Pane::Floor => floor_normal_line(phase, rng),
+        Pane::Outside => outside_normal_line(clock, rng),
+        Pane::Floor => floor_normal_line(clock, rng),
     }
 }
 
@@ -122,9 +123,14 @@ fn memo_line(rng: &mut ThreadRng) -> LogLine {
     LogLine::new(text, Classification::Normal, None)
 }
 
-fn call_line(phase: Phase, zone: Zone, rng: &mut ThreadRng) -> LogLine {
-    let h = hour_for(phase, rng);
-    let m = odd_minute(rng);
+/// 呼びかけ. Its odd-minute tell (第4節) is guaranteed by `weights_for`
+/// zeroing this bucket out whenever the shared clock's minute is even
+/// (`DayClock::minute_is_odd`) -- this reads the clock's true minute as-is,
+/// it never fabricates one.
+fn call_line(clock: DayClock, zone: Zone, rng: &mut ThreadRng) -> LogLine {
+    debug_assert!(clock.minute_is_odd(), "call_line must only be reached on an odd minute");
+    let h = clock.hour();
+    let m = clock.minute();
     let loc = zone.location_pool()[rng.random_range(0..zone.location_pool().len())];
     let body = CALL_BODIES[rng.random_range(0..CALL_BODIES.len())];
     let text = format!("{} {}", timestamp(h, m), body.replace("{loc}", loc));
@@ -133,9 +139,9 @@ fn call_line(phase: Phase, zone: Zone, rng: &mut ThreadRng) -> LogLine {
 
 /// The scripted 二人称 beat that fires the first time the player mishandles a
 /// line: the log itself briefly describes the player's own action back to them.
-pub fn mistake_beat(phase: Phase, verb: Verb, rng: &mut ThreadRng) -> LogLine {
-    let h = hour_for(phase, rng);
-    let m = even_minute(rng);
+pub fn mistake_beat(clock: DayClock, verb: Verb) -> LogLine {
+    let h = clock.hour();
+    let m = even_minute_of(clock);
     let text = format!("{} あなたは 行を {}した", timestamp(h, m), verb.label());
     LogLine::new(text, Classification::Normal, None).scripted().with_font(LineFont::Mistake)
 }
@@ -149,6 +155,10 @@ const CORRUPTED_BODIES: &[&str] = &[
     "扉に鍵はかかっていない",
 ];
 
+/// Unlike every other line, this one's timestamp is *not* a read of the
+/// shared clock -- the whole point of "別の何かの記録" (第3.1節) is that time
+/// has stopped meaning anything, so an incoherent, independently-rolled hour
+/// and minute is the correct behavior here, not a bug to fix.
 pub fn corrupted_line(rng: &mut ThreadRng) -> LogLine {
     let h = rng.random_range(0..24);
     let m = rng.random_range(0..60);
@@ -183,10 +193,16 @@ struct Weights {
     call: u32,
 }
 
-fn weights_for(pane: Pane, phase: Phase, zone: Zone, day: u32) -> Weights {
+fn weights_for(pane: Pane, phase: Phase, zone: Zone, day: u32, minute_is_odd: bool) -> Weights {
     let react_base = 12 + (day.min(10) * 2) + if phase == Phase::Peak { 10 } else { 0 };
-    let not_react_base =
-        4 + if phase == Phase::Night { 10 } else { 2 } + if zone == Zone::Counter { 5 } else { 0 };
+    // 呼びかけは必ず奇数分(第4節) -- on an even minute this bucket is zeroed
+    // out entirely rather than rolled and then reassigned an odd minute, so
+    // the tell stays a true read of the shared clock, never a fabricated one.
+    let not_react_base = if minute_is_odd {
+        4 + if phase == Phase::Night { 10 } else { 2 } + if zone == Zone::Counter { 5 } else { 0 }
+    } else {
+        0
+    };
     let memo = if phase == Phase::Prep { 10 } else { 2 };
     let normal = 60;
     // 原則2(距離だけが縮む): the pane the current escalation stage is
@@ -220,26 +236,27 @@ fn weights_for(pane: Pane, phase: Phase, zone: Zone, day: u32) -> Weights {
 
 pub fn generate(
     pane: Pane,
-    phase: Phase,
+    clock: DayClock,
     zone: Zone,
     day: u32,
     last_normal: Option<&str>,
     rng: &mut ThreadRng,
 ) -> LogLine {
-    let w = weights_for(pane, phase, zone, day);
+    let phase = Phase::for_hour(clock.hour());
+    let w = weights_for(pane, phase, zone, day, clock.minute_is_odd());
     let total = w.normal + w.memo + w.deviation + w.repeat + w.call;
 
     let roll = rng.random_range(0..total);
     if roll < w.normal {
-        normal_line_for(pane, phase, rng)
+        normal_line_for(pane, clock, rng)
     } else if roll < w.normal + w.memo {
         memo_line(rng)
     } else if roll < w.normal + w.memo + w.deviation {
-        deviation_threat_line(phase, rng)
+        deviation_threat_line(clock, rng)
     } else if roll < w.normal + w.memo + w.deviation + w.repeat {
         repeat_threat_line(RuleFlags::compute(day), last_normal, rng)
-            .unwrap_or_else(|| normal_line_for(pane, phase, rng))
+            .unwrap_or_else(|| normal_line_for(pane, clock, rng))
     } else {
-        call_line(phase, zone, rng)
+        call_line(clock, zone, rng)
     }
 }

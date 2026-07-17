@@ -1,9 +1,8 @@
 use bevy::prelude::*;
-use rand::RngExt;
 
-use crate::domain::{self, LogLine, Phase, Zone};
+use crate::domain::{self, DayClock, LogLine, Phase, Zone};
 
-/// Truly global run state -- the day/phase clock, the shared corruption
+/// Truly global run state -- the shared day clock, the shared corruption
 /// meter, and the one-off scripted beats. Everything that belongs to a
 /// single pane instead (its own spawn timer, its own last normal line, its
 /// own queue of scripted lines) lives as ECS components on that pane's
@@ -11,8 +10,11 @@ use crate::domain::{self, LogLine, Phase, Zone};
 #[derive(Resource)]
 pub struct GameData {
     pub day: u32,
+    /// Cached `Phase::for_hour(clock.hour())` -- re-derived every tick
+    /// (`screens::playing::spawn::phase_tick`), never advanced on its own
+    /// timer, so it can never drift out of sync with `clock` (CLAUDE.md §3.7).
     pub phase: Phase,
-    pub phase_timer: Timer,
+    pub clock: DayClock,
     pub zone: Zone,
     pub corruption: f32,
     pub income: i64,
@@ -37,7 +39,7 @@ impl GameData {
         Self {
             day: 1,
             phase: Phase::Prep,
-            phase_timer: Timer::from_seconds(Phase::Prep.duration_secs(), TimerMode::Once),
+            clock: DayClock::default(),
             zone: Zone::Perimeter,
             corruption: 0.0,
             income: 0,
@@ -48,15 +50,22 @@ impl GameData {
         }
     }
 
-    pub fn maybe_queue_name_call(&mut self, rng: &mut impl rand::Rng) {
-        if self.name_call_done || self.zone != Zone::Counter || self.phase != Phase::Night {
+    /// 呼ばれる only ever fires once per run, at whichever moment Night and
+    /// `Zone::Counter` first coincide -- so "now" (the shared clock) is
+    /// already the right timestamp; it also carries 呼びかけ's odd-minute
+    /// tell (第4節), so this waits for an odd minute the same way
+    /// `generate::call_line` does, rather than fabricating one.
+    pub fn maybe_queue_name_call(&mut self) {
+        if self.name_call_done
+            || self.zone != Zone::Counter
+            || self.phase != Phase::Night
+            || !self.clock.minute_is_odd()
+        {
             return;
         }
         self.name_call_done = true;
-        let (lo, hi) = self.phase.hour_range();
         let loc = self.zone.location_pool()[0];
-        let h = rng.random_range(lo..=hi);
-        let m = rng.random_range(0..30) * 2 + 1;
-        self.pending_intrusion = Some(domain::name_call(h, m, &self.player_name, loc));
+        self.pending_intrusion =
+            Some(domain::name_call(self.clock.hour(), self.clock.minute(), &self.player_name, loc));
     }
 }

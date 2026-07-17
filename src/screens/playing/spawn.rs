@@ -53,21 +53,17 @@ pub(super) fn spawn_line_ui(
     entity
 }
 
-/// Ticks the shared day/phase clock. Unlike each pane's own spawn cadence
-/// (`PaneRuntime::retime`), there is exactly one of these -- all three
-/// panes read the same `phase`/`day`/`zone` when weighting their content
-/// (`domain::generate`).
+/// Ticks the one shared `DayClock` (CLAUDE.md §3.7) and re-derives `phase`
+/// from it every frame, rather than running phase transitions off their own
+/// independent timer -- this is the single source of "what time it is" that
+/// every pane's line-stamping and weighting reads (`domain::generate`).
 pub(super) fn phase_tick(
     time: Res<Time>,
     mut game_data: ResMut<GameData>,
     mut panes: Query<&mut PaneRuntime>,
 ) {
-    game_data.phase_timer.tick(time.delta());
-    if !game_data.phase_timer.is_finished() {
-        return;
-    }
-    let next_phase = game_data.phase.next();
-    if next_phase == domain::Phase::Prep {
+    let wraps = game_data.clock.advance(time.delta_secs());
+    for _ in 0..wraps {
         game_data.day += 1;
         game_data.zone = game_data.zone.next();
         let day = game_data.day;
@@ -76,13 +72,15 @@ pub(super) fn phase_tick(
             kiln.pending_scripted.push_back(domain::day_marker(day));
         }
     }
-    game_data.phase = next_phase;
-    game_data.phase_timer = Timer::from_seconds(next_phase.duration_secs(), TimerMode::Once);
-    for mut runtime in &mut panes {
-        runtime.retime(next_phase);
+
+    let next_phase = domain::Phase::for_hour(game_data.clock.hour());
+    if next_phase != game_data.phase {
+        game_data.phase = next_phase;
+        for mut runtime in &mut panes {
+            runtime.retime(next_phase);
+        }
     }
-    let mut rng = rand::rng();
-    game_data.maybe_queue_name_call(&mut rng);
+    game_data.maybe_queue_name_call();
 }
 
 /// Drives all three panes' log spawning from one system rather than three
@@ -111,7 +109,7 @@ pub(super) fn line_spawn(
             let last_normal = runtime.last_normal_line.clone();
             domain::generate(
                 runtime.pane,
-                game_data.phase,
+                game_data.clock,
                 game_data.zone,
                 game_data.day,
                 last_normal.as_deref(),
@@ -150,14 +148,14 @@ pub(super) fn line_spawn(
                     && !game_data.first_mistake_done
                 {
                     game_data.first_mistake_done = true;
-                    let beat = domain::mistake_beat(game_data.phase, verb, &mut rng);
+                    let beat = domain::mistake_beat(game_data.clock, verb);
                     runtime.pending_scripted.push_back(beat);
                 }
             }
         }
     }
 
-    game_data.maybe_queue_name_call(&mut rng);
+    game_data.maybe_queue_name_call();
 }
 
 pub(super) fn apply_outcome(game_data: &mut GameData, outcome: domain::Outcome) {
