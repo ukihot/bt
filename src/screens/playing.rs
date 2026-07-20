@@ -6,10 +6,12 @@
 //! drives new lines in from `GameData` across all three panes at once,
 //! `input`/`pause` handle keyboard input (including which pane is active),
 //! `intrusion` is 呼ばれる's own unreachable slot, `glitch` is the purely
-//! cosmetic CRT flicker, and `corruption` is the loss condition. `setup`
-//! ties the screen's entities and resources together for `OnEnter`/`OnExit`.
+//! cosmetic CRT flicker, `day_indicator` is the 7-segment-style day counter
+//! next to `Kiln`, and `corruption` is the loss condition. `setup` ties the
+//! screen's entities and resources together for `OnEnter`/`OnExit`.
 
 mod corruption;
+mod day_indicator;
 mod glitch;
 mod input;
 mod intrusion;
@@ -43,6 +45,7 @@ impl Plugin for PlayingPlugin {
                     corruption::corruption_check,
                     render::sync_log_display,
                     render::sync_pane_headers,
+                    day_indicator::sync_day_indicator,
                     glitch::glitch_flicker,
                 )
                     .chain()

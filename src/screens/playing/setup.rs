@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy::text::FontSize;
 
+use super::day_indicator::spawn_day_indicator;
 use super::glitch::GlitchTimer;
 use super::intrusion::{ActiveIntrusion, IntrusionSlot};
 use super::pane::{ActivePane, PaneRuntime};
@@ -127,32 +128,48 @@ pub(super) fn setup(mut commands: Commands, fonts: Res<Fonts>, game_data: Res<Ga
         })
         .id();
 
+    // 隣接モニタ間はベゼル幅ぶんの `BG` だけを挟む(色付きの罫線ではなく
+    // 地の色そのもの)。同じ `MONITOR_BG` を隙間なく並べると3画面が一枚の
+    // 塊に見えてしまうため、物理モニタを壁掛けしたときの筐体の継ぎ目に
+    // 相当する最小限の seam を残し、「枠は接するが画面は別」を保つ。
+    let bezel = px(3.0);
+
     // 第3.1節: 上段(横いっぱい)が焼成室、下段左右が外・売り場の 2x2 グリッド。
     // 縦の配分は Kiln:(Outside/Floor) = capacity 比(8:5, φ 近似)に揃えて
     // いる(domain::pane::Pane::capacity 参照)ので、行数で決まる「主に見る
-    // 画面」の重みが、画面上の面積比とも一致する。
+    // 画面」の重みが、画面上の面積比とも一致する。上段自体は日数インジケータ
+    // (`day_indicator`)と焼成室ログの横並び——インジケータは固定幅の小さな
+    // 計器で、焼成室ログとの間で幅を競う対象ではないため `flex_grow` は
+    // 使わず(`day_indicator::INDICATOR_WIDTH`)、余った幅はすべて焼成室ログ
+    // 側の `flex_grow: 1.0` に流れる。
+    let day_indicator = spawn_day_indicator(&mut commands, game_data.day);
     let kiln = spawn_pane(
         &mut commands,
         &fonts,
         Pane::Kiln,
         game_data.phase,
         shrinkable(Node {
-            width: Val::Percent(100.0),
-            flex_grow: Pane::Kiln.capacity() as f32,
+            flex_grow: 1.0,
             flex_direction: FlexDirection::Column,
             row_gap: px(4),
             ..default()
         }),
     );
+    let top_row = commands
+        .spawn(Node {
+            width: Val::Percent(100.0),
+            flex_grow: Pane::Kiln.capacity() as f32,
+            flex_direction: FlexDirection::Row,
+            column_gap: bezel,
+            ..default()
+        })
+        .id();
+    commands.entity(top_row).add_children(&[day_indicator, kiln]);
+
     let outside =
         spawn_pane(&mut commands, &fonts, Pane::Outside, game_data.phase, split_pane_node());
     let floor = spawn_pane(&mut commands, &fonts, Pane::Floor, game_data.phase, split_pane_node());
 
-    // 隣接モニタ間はベゼル幅ぶんの `BG` だけを挟む(色付きの罫線ではなく
-    // 地の色そのもの)。同じ `MONITOR_BG` を隙間なく並べると3画面が一枚の
-    // 塊に見えてしまうため、物理モニタを壁掛けしたときの筐体の継ぎ目に
-    // 相当する最小限の seam を残し、「枠は接するが画面は別」を保つ。
-    let bezel = px(3.0);
     let bottom_row = commands
         .spawn(Node {
             width: Val::Percent(100.0),
@@ -173,7 +190,7 @@ pub(super) fn setup(mut commands: Commands, fonts: Res<Fonts>, game_data: Res<Ga
             ..default()
         })
         .id();
-    commands.entity(grid).add_children(&[kiln, bottom_row]);
+    commands.entity(grid).add_children(&[top_row, bottom_row]);
 
     // 呼ばれる(第7節)専用の枠。3画面のどの `Node` 木にも属さない、独立した
     // 兄弟要素であることそのものが「不可触」を実装として保証する。

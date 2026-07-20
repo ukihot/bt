@@ -106,48 +106,48 @@ const BACK_DOOR_RUMOR: RumorId = 7;
 /// 書かない(`rules::Cast`参照)。
 pub const CATALOG: &[RumorDef] = &[
     RumorDef {
-        body: "{name}さんが「奇数分に帳面をつけると良くないらしいですよ」とおっしゃっていました",
+        body: "{name}さんが、奇数分に帳面をつけるのは良くないと、真顔でおっしゃっていました",
         effect: Effect::None,
     },
     RumorDef {
-        body: "{name}さんが「夜の納品だけは断ったほうがいいと聞きました」とおっしゃっていました",
+        body: "{name}さんが「夜の納品だけは、お断りしたほうがいいですよ」と念を押していらっしゃいました",
         effect: Effect::Enable { pane: Pane::Kiln, threat: ThreatKind::NightDelivery },
     },
     RumorDef {
-        body: "{name}さんが「三のつく日は窯の火を落とさないほうがいいらしいですよ」とおっしゃっていました",
+        body: "三のつく日は窯の火を落とさないほうがいいのだと、{name}さんが声をひそめておっしゃっていました",
         effect: Effect::Void { threat: ThreatKind::Repeat, condition: Condition::DayHasThree },
     },
     RumorDef {
-        body: "{name}さんが「同じ話を二度されても、続けて聞かないほうがいいそうです」とおっしゃっていました",
+        body: "{name}さんが「同じ話を二度されても、続けて聞かないほうがいいですよ」と教えてくださいました",
         effect: Effect::None,
     },
     RumorDef {
-        body: "{name}さんが「名前を呼ばれても、すぐには信じないほうがいいらしいですよ」とおっしゃっていました",
+        body: "名前を呼ばれても、すぐには信じないほうがいいのだと、{name}さんがぽつりとおっしゃっていました",
         effect: Effect::None,
     },
     RumorDef {
-        body: "{name}さんが「焼き上がりの字だけは崩さないでほしいと聞きました」とおっしゃっていました",
+        body: "{name}さんに「焼き上がりの字だけは、崩さないでくださいね」と頼まれました",
         effect: Effect::None,
     },
     RumorDef {
-        body: "常連の{name}さんが「この店、閉店時間だけは聞かないほうがいいそうですよ」と話していらっしゃいました",
+        body: "常連の{name}さんが「この店、閉店時間だけは聞かないほうがいいですよ」と、困ったように話していらっしゃいました",
         effect: Effect::Enable { pane: Pane::Floor, threat: ThreatKind::ClosingTime },
     },
     RumorDef {
         // BACK_DOOR_RUMOR -- keep index 7 in sync with the constant above.
-        body: "{name}さんが「裏口には近づかないほうがいいらしい」とおっしゃっていました",
+        body: "裏口にだけは近づかないほうがいいのだと、{name}さんがめずらしく真剣な声でおっしゃっていました",
         effect: Effect::Enable { pane: Pane::Outside, threat: ThreatKind::BackDoor },
     },
     RumorDef {
-        body: "{name}さんが「外の異常なしは、二回続けて信じてはいけないらしいですよ」とおっしゃっていました",
+        body: "{name}さんが「外の異常なしは、二回続けて信じてはいけませんよ」と、どこか怯えた様子でおっしゃっていました",
         effect: Effect::Enable { pane: Pane::Outside, threat: ThreatKind::OutsideRepeat },
     },
     RumorDef {
-        body: "{name}さんが「裏口の話をしていた人のことは、あまり当てにならないらしいですよ」とおっしゃっていました",
+        body: "裏口の話をしていた人のことは、あまり当てにしないほうがいいと、{name}さんが耳打ちしてきました",
         effect: Effect::Discredit { target: BACK_DOOR_RUMOR },
     },
     RumorDef {
-        body: "{name}さんが「帳面の同じ行に気づいたら、すぐに消してしまうと楽になるらしいですよ」とおっしゃっていました",
+        body: "{name}さんが「帳面の同じ行に気づいたら、すぐに消してしまうと楽になりますよ」と、にっこり教えてくれました",
         effect: Effect::Relieve { threat: ThreatKind::Repeat, bonus: 3.0 },
     },
 ];
