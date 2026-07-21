@@ -3,7 +3,7 @@ use rand::rngs::ThreadRng;
 
 use super::customer::{CUSTOMERS, CustomerId};
 use super::pane::Pane;
-use super::rumors::{CATALOG, Effect, RumorId, ThreatKind};
+use super::rumors::{CATALOG, Effect, ItemKind, RumorId, ThreatKind};
 
 /// The facts a `Condition` (see `rumors::Condition`) needs to evaluate
 /// itself. Grows as new conditions need new inputs -- kept separate from
@@ -106,10 +106,14 @@ impl RuleLedger {
     /// that mentions `threat` -- i.e. the most recently spoken word on the
     /// subject wins, exactly matching CLAUDE.md §3.4's "矛盾するルールが
     /// 出た場合は新しいものが優先される". Falls back to each threat kind's
-    /// baseline when nothing heard says anything about it: `Repeat` is
-    /// reactable from day one (it's one of the game's two baseline anomaly
-    /// families, per §4), everything else stays impossible until some rumor
-    /// `Enable`s it.
+    /// own baseline when nothing heard says anything about it -- and that
+    /// baseline is deliberately *not* uniform: `Repeat` and
+    /// `ItemMiscount(HotDog)` are reactable from day one (旗揚げゲームの
+    /// 「赤上げて」側 -- 何もしなければ既に上がっている), while every other
+    /// `ItemMiscount`品目 stays impossible until some rumor `Enable`s it
+    /// (何もしなければ上がっていない側)。見た目がほぼ同じ「数え方がおかしい」
+    /// 行でも、品目によって既定の"どちら側"が違う、という混乱そのものが狙い
+    /// (2026-07-21)。
     pub fn verdict(&self, pane: Pane, threat: ThreatKind, ctx: Context) -> Verdict {
         for &id in self.heard.iter().rev() {
             let def = &CATALOG[id];
@@ -125,6 +129,7 @@ impl RuleLedger {
         }
         match threat {
             ThreatKind::Repeat => Verdict::Active,
+            ThreatKind::ItemMiscount(ItemKind::HotDog) => Verdict::Active,
             _ => Verdict::Suppressed,
         }
     }
@@ -208,6 +213,63 @@ mod tests {
         // Day-with-three alone isn't enough -- the rule doesn't exist until
         // spoken (第3.4節).
         assert_eq!(ledger.verdict(Pane::Kiln, ThreatKind::Repeat, CTX_HAS_THREE), Verdict::Active);
+    }
+
+    #[test]
+    fn item_miscount_defaults_are_not_uniform_across_items() {
+        // The whole point of splitting ItemMiscount by item (旗揚げゲームの
+        // 混乱、CLAUDE.md §4): most items start impossible like NightDelivery,
+        // but HotDog starts reactable from day one like Repeat.
+        let ledger = RuleLedger::new();
+        assert_eq!(
+            ledger.verdict(Pane::Kiln, ThreatKind::ItemMiscount(ItemKind::Croissant), CTX_NO_THREE),
+            Verdict::Suppressed
+        );
+        assert_eq!(
+            ledger.verdict(Pane::Kiln, ThreatKind::ItemMiscount(ItemKind::ShioPan), CTX_NO_THREE),
+            Verdict::Suppressed
+        );
+        assert_eq!(
+            ledger.verdict(Pane::Kiln, ThreatKind::ItemMiscount(ItemKind::MilkLoaf), CTX_NO_THREE),
+            Verdict::Suppressed
+        );
+        assert_eq!(
+            ledger.verdict(Pane::Kiln, ThreatKind::ItemMiscount(ItemKind::HotDog), CTX_NO_THREE),
+            Verdict::Active
+        );
+    }
+
+    #[test]
+    fn enabling_one_item_s_miscount_does_not_enable_another_s() {
+        let enable_croissant = find(|e| {
+            matches!(e, Effect::Enable { threat: ThreatKind::ItemMiscount(ItemKind::Croissant), .. })
+        });
+        let ledger = hear_all(RuleLedger::new(), &[enable_croissant]);
+        assert_eq!(
+            ledger.verdict(Pane::Kiln, ThreatKind::ItemMiscount(ItemKind::Croissant), CTX_NO_THREE),
+            Verdict::Active
+        );
+        // A rumor naming one item has nothing to say about a different one.
+        assert_eq!(
+            ledger.verdict(Pane::Kiln, ThreatKind::ItemMiscount(ItemKind::ShioPan), CTX_NO_THREE),
+            Verdict::Suppressed
+        );
+    }
+
+    #[test]
+    fn hot_dog_item_miscount_is_voided_only_on_a_three_day() {
+        let void_hot_dog = find(|e| {
+            matches!(e, Effect::Void { threat: ThreatKind::ItemMiscount(ItemKind::HotDog), .. })
+        });
+        let ledger = hear_all(RuleLedger::new(), &[void_hot_dog]);
+        assert_eq!(
+            ledger.verdict(Pane::Kiln, ThreatKind::ItemMiscount(ItemKind::HotDog), CTX_NO_THREE),
+            Verdict::Active
+        );
+        assert_eq!(
+            ledger.verdict(Pane::Kiln, ThreatKind::ItemMiscount(ItemKind::HotDog), CTX_HAS_THREE),
+            Verdict::Suppressed
+        );
     }
 
     #[test]

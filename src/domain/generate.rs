@@ -6,11 +6,18 @@ use super::log_line::{Classification, LineFont, LogLine};
 use super::pane::Pane;
 use super::phase::Phase;
 use super::rules::{Context, RuleLedger, Verdict};
-use super::rumors::{ThreatKind, rumor_line};
+use super::rumors::{ItemKind, ThreatKind, rumor_line};
 use super::threats::{deviation_threat_line, night_delivery_threat_line};
 use super::timestamp::{even_minute_of, fill_n, timestamp};
 use super::verb::Verb;
 use super::zone::Zone;
+
+/// Every item `item_normal_line`/`item_miscount_line` can pick from, besides
+/// the baguette (which keeps its own dedicated `baking_normal_line` and
+/// always-`ShouldReact` deviations, per `deviation_threat_line` -- neither
+/// touched by rumors, unlike this pool's items).
+const ITEM_POOL: &[ItemKind] =
+    &[ItemKind::Croissant, ItemKind::ShioPan, ItemKind::HotDog, ItemKind::MilkLoaf];
 
 const NORMAL_BODIES: &[&str] = &[
     "食パンの型を{n}枚 洗った",
@@ -124,6 +131,24 @@ fn baking_normal_line(clock: DayClock, rng: &mut ThreadRng) -> LogLine {
     LogLine::new(text, Classification::Normal)
 }
 
+/// The correctly-counted baseline for `ITEM_POOL`'s items, mirroring
+/// `baking_normal_line`'s role for the baguette -- without this, the only
+/// place these items would ever appear is `item_miscount_line`, always
+/// miscounted, which would make the "wrong" counter the only counter a
+/// player ever sees (nothing to read it *against*). This is what actually
+/// teaches the correct counter well enough for `item_miscount_line`'s wrong
+/// one to land as wrong (第4節: 異常は筆癖でバレる、筆癖を知らなければ
+/// 何も見えない)。
+fn item_normal_line(clock: DayClock, rng: &mut ThreadRng) -> LogLine {
+    let item = ITEM_POOL[rng.random_range(0..ITEM_POOL.len())];
+    let h = clock.hour();
+    let m = even_minute_of(clock);
+    let n = rng.random_range(1..20);
+    let text =
+        format!("{} {}が{}{} 焼き上がり", timestamp(h, m), item.name(), n, item.correct_counter());
+    LogLine::new(text, Classification::Normal)
+}
+
 fn outside_normal_line(clock: DayClock, corruption: f32, rng: &mut ThreadRng) -> LogLine {
     let h = clock.hour();
     let m = even_minute_of(clock);
@@ -145,15 +170,18 @@ fn floor_normal_line(clock: DayClock, rng: &mut ThreadRng) -> LogLine {
 
 /// Each pane's ordinary business, in its own register (第4節). `Kiln`
 /// occasionally swaps in the baking-specific line, matching its historical
-/// 35% ratio; the other two panes just draw from their own body pool.
-/// `corruption` only matters to `Outside` (`outside_body_pool`) -- threaded
-/// through here anyway so every call site (including `repeated_line`'s
-/// fallbacks) can stay pane-agnostic.
+/// 35% ratio, and separately has a smaller chance of a correctly-counted
+/// `ITEM_POOL` line (`item_normal_line`); the other two panes just draw from
+/// their own body pool. `corruption` only matters to `Outside`
+/// (`outside_body_pool`) -- threaded through here anyway so every call site
+/// (including `repeated_line`'s fallbacks) can stay pane-agnostic.
 fn normal_line_for(pane: Pane, clock: DayClock, corruption: f32, rng: &mut ThreadRng) -> LogLine {
     match pane {
         Pane::Kiln => {
             if rng.random_bool(0.35) {
                 baking_normal_line(clock, rng)
+            } else if rng.random_bool(0.15) {
+                item_normal_line(clock, rng)
             } else {
                 normal_line(clock, rng)
             }
@@ -255,6 +283,10 @@ struct Weights {
     /// heard this run -- 0 until then, so the event simply never happens
     /// rather than happening but reading as `Normal`.
     taboo_event: u32,
+    /// バゲット以外の品目の数え違い(`item_miscount_line`)。`deviation`とは
+    /// 独立したバケット -- こちらは常に生成され、`Verdict`で分類だけが
+    /// 変わる(`taboo_event`のように重み0で起こらなくなることはない)。
+    item_miscount: u32,
     call: u32,
 }
 
@@ -311,6 +343,7 @@ fn weights_for(
             deviation: react_base * zone_bonus,
             repeat: react_base / 4,
             taboo_event,
+            item_miscount: react_base / 3,
             call: not_react_base / 3,
         },
         Pane::Floor => Weights {
@@ -319,6 +352,7 @@ fn weights_for(
             deviation: 0,
             repeat: 0,
             taboo_event: 0,
+            item_miscount: 0,
             call: not_react_base / 2,
         },
         Pane::Outside => Weights {
@@ -327,6 +361,7 @@ fn weights_for(
             deviation: 0,
             repeat: 0,
             taboo_event: 0,
+            item_miscount: 0,
             call: not_react_base * zone_bonus,
         },
     }
@@ -363,6 +398,27 @@ fn repeated_line(
     }
 }
 
+/// 焼成室固有、バゲット以外の品目の数え違い(2026-07-21追加、CLAUDE.md §4)。
+/// 生成される文面は正誤にかかわらず常に同じ形(`item.wrong_counter()` を
+/// 使った、もっともらしいが間違った数え方)——`Verdict` が変えるのは分類
+/// (検印が正解か削除が正解か)だけで、見た目には一切出ない。旗揚げゲームの
+/// 「赤上げて、白上げて」そのままに、品目ごとに違う既定値と、噂で個別に
+/// 上書きされた履歴を、プレイヤー自身が覚えておく必要がある。
+fn item_miscount_line(clock: DayClock, ledger: &RuleLedger, day: u32, rng: &mut ThreadRng) -> LogLine {
+    let item = ITEM_POOL[rng.random_range(0..ITEM_POOL.len())];
+    let h = clock.hour();
+    let m = even_minute_of(clock);
+    let n = rng.random_range(1..20);
+    let text =
+        format!("{} {}が{}{} 焼き上がり", timestamp(h, m), item.name(), n, item.wrong_counter());
+
+    let verdict = ledger.verdict(Pane::Kiln, ThreatKind::ItemMiscount(item), Context { day });
+    match verdict {
+        Verdict::Active => LogLine::new(text, Classification::ShouldReact),
+        Verdict::Suppressed => LogLine::new(text, Classification::Normal),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn generate(
     pane: Pane,
@@ -376,7 +432,8 @@ pub fn generate(
 ) -> LogLine {
     let phase = Phase::for_hour(clock.hour());
     let w = weights_for(pane, phase, zone, day, clock.minute_is_odd(), ledger);
-    let total = w.normal + w.rumor + w.deviation + w.repeat + w.taboo_event + w.call;
+    let total =
+        w.normal + w.rumor + w.deviation + w.repeat + w.taboo_event + w.item_miscount + w.call;
 
     let roll = rng.random_range(0..total);
     if roll < w.normal {
@@ -396,6 +453,11 @@ pub fn generate(
         // `weights_for` が `taboo_event` を焼成室以外では常に0にしている
         // ので、ここに来るのも常に `Pane::Kiln`。
         night_delivery_threat_line(clock, rng)
+    } else if roll < w.normal + w.rumor + w.deviation + w.repeat + w.taboo_event + w.item_miscount
+    {
+        // `weights_for` が `item_miscount` を焼成室以外では常に0にしている
+        // ので、ここに来るのも常に `Pane::Kiln`。
+        item_miscount_line(clock, ledger, day, rng)
     } else {
         call_line(clock, zone, rng)
     }

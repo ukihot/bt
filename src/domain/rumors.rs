@@ -23,6 +23,64 @@ pub enum ThreatKind {
     Repeat,
     /// 夜の納品(禁忌#2)
     NightDelivery,
+    /// バゲット以外のパンの数え違い(2026-07-21追加)。`ItemKind` ごとに
+    /// 独立した `ThreatKind` -- 「パンの数え間違い」という1つの脅威では
+    /// なく、品目の数だけ別々に有効/無効を切り替えられる。旗揚げゲームの
+    /// 「赤上げて、白上げて」の混乱を狙った仕掛けで、各品目の既定状態
+    /// (`rules::RuleLedger::verdict` のフォールバック)も品目ごとにバラバラ
+    /// にしてある -- 同じ「数え方がおかしい」という見た目の行が、聞いた噂
+    /// 次第で品目ごとに正解の動詞が違う、という状態を作るのが狙い。
+    ItemMiscount(ItemKind),
+}
+
+/// バゲット以外の主要パン(第4節: バゲットの「本」数え・偶数分丸めと並ぶ、
+/// 品目ごとの数え方の筆癖を広げるための追加)。`correct_counter`/
+/// `wrong_counter` はどちらも実在しそうな助数詞から選んでいる -- 明らかな
+/// でたらめ(「@個」のような)にはしない。異常だと気づけるかどうかは、
+/// この店の筆癖(第4節)をどれだけ読み込んでいるか次第、という原則1の
+/// 範囲に留める。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ItemKind {
+    Croissant,
+    ShioPan,
+    HotDog,
+    MilkLoaf,
+}
+
+impl ItemKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            ItemKind::Croissant => "クロワッサン",
+            ItemKind::ShioPan => "塩パン",
+            ItemKind::HotDog => "ホットドッグ",
+            ItemKind::MilkLoaf => "食パン",
+        }
+    }
+
+    /// The counter word this shop's own bookkeeping actually uses for this
+    /// item -- never appears in `ItemMiscount` lines themselves (those
+    /// always use `wrong_counter`); only relevant if a future normal-line
+    /// generator wants to mention the item correctly.
+    pub fn correct_counter(self) -> &'static str {
+        match self {
+            ItemKind::Croissant => "個",
+            ItemKind::ShioPan => "個",
+            ItemKind::HotDog => "本",
+            ItemKind::MilkLoaf => "斤",
+        }
+    }
+
+    /// The mismatched counter `generate::item_miscount_line` writes instead
+    /// -- plausible on its own (it's a real counter word), just wrong for
+    /// this particular item.
+    pub fn wrong_counter(self) -> &'static str {
+        match self {
+            ItemKind::Croissant => "本",
+            ItemKind::ShioPan => "枚",
+            ItemKind::HotDog => "個",
+            ItemKind::MilkLoaf => "本",
+        }
+    }
 }
 
 /// A condition a `Void` effect can be guarded on. Only one variant exists
@@ -115,6 +173,34 @@ pub const CATALOG: &[RumorDef] = &[
         body: "{name}さんが「帳面の同じ行に気づいたら、すぐに消してしまうと楽になりますよ」と、にっこり教えてくれました",
         effect: Effect::Relieve { threat: ThreatKind::Repeat, bonus: 3.0 },
     },
+    RumorDef {
+        body: "{name}さんが「クロワッサンの数が違っていたら、ちゃんと消したほうがいいですよ」と、真面目な顔でおっしゃっていました",
+        effect: Effect::Enable {
+            pane: Pane::Kiln,
+            threat: ThreatKind::ItemMiscount(ItemKind::Croissant),
+        },
+    },
+    RumorDef {
+        body: "{name}さんが「塩パンだけは、数え間違いを見逃さないほうがいいらしいです」と教えてくださいました",
+        effect: Effect::Enable {
+            pane: Pane::Kiln,
+            threat: ThreatKind::ItemMiscount(ItemKind::ShioPan),
+        },
+    },
+    RumorDef {
+        body: "{name}さんが「食パンの数だけは、間違えたままにしないほうがいいそうです」とおっしゃっていました",
+        effect: Effect::Enable {
+            pane: Pane::Kiln,
+            threat: ThreatKind::ItemMiscount(ItemKind::MilkLoaf),
+        },
+    },
+    RumorDef {
+        body: "{name}さんが「ホットドッグの数は、三のつく日だけ気にしなくていいらしいですよ」と、笑いながら教えてくれました",
+        effect: Effect::Void {
+            threat: ThreatKind::ItemMiscount(ItemKind::HotDog),
+            condition: Condition::DayHasThree,
+        },
+    },
 ];
 
 pub fn rumor_line(clock: DayClock, ledger: &mut RuleLedger, rng: &mut ThreadRng) -> LogLine {
@@ -149,7 +235,7 @@ mod tests {
             assert!(!line.text.contains("{name}"));
             assert!(line.text.starts_with("10:30 "));
         }
-        // 200 draws from a 7-entry catalog should have hit the one gated
+        // 200 draws from an 11-entry catalog should have hit the one gated
         // entry at least once.
         assert_eq!(
             ledger.verdict(Pane::Kiln, ThreatKind::NightDelivery, Context { day: 1 }),

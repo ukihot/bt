@@ -29,9 +29,13 @@ for id in heard.rev():
         Enable{pane, threat} if matches → Active
         Void{threat, condition} if matches and condition holds → Suppressed
 一致なし:
-    ThreatKind::Repeat → Active       # 初日から反応対象の既定異常
-    それ以外 → Suppressed              # 噂で Enable されるまで起こらない
+    ThreatKind::Repeat → Active                       # 初日から反応対象の既定異常
+    ThreatKind::ItemMiscount(HotDog) → Active          # 同じく初日から反応対象
+    それ以外 → Suppressed                              # 噂で Enable されるまで起こらない
 ```
+
+`ItemMiscount(ItemKind)` の既定値が品目によって違う(`HotDog` だけ `Active`、他は
+`Suppressed`)のは意図的な非対称 — 詳しくは下記「品目の数え違い」参照。
 
 「矛盾するルールが出た場合は新しいものが優先される」(`CLAUDE.md` §3.4)を、噂の種類が増えても
 ペアごとのハードコードなしに実現している。`Verdict` はもう `taboo` ペイロードを持たない単純な
@@ -79,12 +83,14 @@ for id in heard.rev():
 
 `Condition` は現状 `DayHasThree`(日数に3を含む日、例: 3, 13, 23...)の1種のみ。
 
-## 禁忌集カタログ(全7項目、`src/domain/rumors.rs`)
+## 禁忌集カタログ(全11項目、`src/domain/rumors.rs`)
 
 売り場の客の噂話として、ランダムに1件ずつ流れる(`rumor_line`)。プレイスホルダーの `{name}`
 はその噂の話者名(`Cast` が決める)で埋められる。すべて焼成室(`Pane::Kiln`)向けの効果——
 `Outside`/`Floor` はもう操作対象ではないため(`CLAUDE.md` §3.2)、この2画面固有だった項目
-(旧6〜9: 閉店時間・裏口・外の異常なし・裏口discredit)は2026-07-21に削除した。
+(旧6〜9: 閉店時間・裏口・外の異常なし・裏口discredit)は2026-07-21に削除した。同日、代わりに
+品目(クロワッサン/塩パン/ホットドッグ/食パン)ごとの数え違いを4項目追加した——詳細は下記
+「品目の数え違い」参照。
 
 | # | 本文の要旨 | 効果 |
 |---|---|---|
@@ -95,21 +101,51 @@ for id in heard.rev():
 | 4 | 名前を呼ばれてもすぐには信じないほうがいい | `None`(伏線 — 「呼ばれる」演出の予告) |
 | 5 | 焼き上がりの字だけは崩さないでほしい | `None`(伏線 — 「焼き上がり」表記の逸脱の予告。3基本異常はもともと常に`ShouldReact`なので、この噂は機械的な効果を持たない) |
 | 6 | 帳面の同じ行に気づいたらすぐに消すと楽になるらしい | `Relieve{Repeat, bonus:3.0}`(援助系) |
+| 7 | クロワッサンの数が違っていたら、ちゃんと消したほうがいい | `Enable{Kiln, ItemMiscount(Croissant)}` |
+| 8 | 塩パンだけは、数え間違いを見逃さないほうがいい | `Enable{Kiln, ItemMiscount(ShioPan)}` |
+| 9 | 食パンの数だけは、間違えたままにしないほうがいい | `Enable{Kiln, ItemMiscount(MilkLoaf)}` |
+| 10 | ホットドッグの数は、三のつく日だけ気にしなくていい | `Void{ItemMiscount(HotDog), DayHasThree}` |
 
 禁忌集の項目リスト = 実質のレベルデザイン。日ごとに一項ずつ意味を持ち始める構成
 (`CLAUDE.md` §5)。項目 6 だけが唯一の援助系(`Effect::Relieve`)で、`Zone` を一切動かさず
 corruption の回復だけを厚くする。
 
-## `ThreatKind`(2種、`src/domain/rumors.rs`)
+## `ThreatKind`(6種、`src/domain/rumors.rs`)
 
 | ThreatKind | 既定状態 | 出現画面 |
 |---|---|---|
 | `Repeat` | 初日から `Active`(焼成室の既定の反復。項目2で voidable) | Kiln |
 | `NightDelivery` | 既定 `Suppressed`(項目1で `Enable`) | Kiln、かつ夜のフェーズのみ |
+| `ItemMiscount(Croissant)` | 既定 `Suppressed`(項目7で `Enable`) | Kiln |
+| `ItemMiscount(ShioPan)` | 既定 `Suppressed`(項目8で `Enable`) | Kiln |
+| `ItemMiscount(MilkLoaf)` | 既定 `Suppressed`(項目9で `Enable`) | Kiln |
+| `ItemMiscount(HotDog)` | 初日から `Active`(項目10で三のつく日だけ voidable) | Kiln |
 
 かつてあった `OutsideRepeat`/`ClosingTime`/`BackDoor`(禁忌#9/#7/#8)は2026-07-21に削除した
 ——`Outside`/`Floor` はもう操作対象ではなく、削除/検印/静観の「正解」を確かめる手段が存在しない
 ため(`CLAUDE.md` §3.2・§9「操作対象の範囲」)。
+
+### 品目の数え違い(`ItemMiscount`) — 旗揚げゲームの混乱を品目ごとに再現する
+
+2026-07-21追加(`CLAUDE.md` §4・§5)。`domain::rumors::ItemKind` がバゲット以外の主要4品目
+(クロワッサン・塩パン・ホットドッグ・食パン)を表し、それぞれ独立した `ThreatKind::
+ItemMiscount(ItemKind)` を持つ——「パンの数え違い」という1つの脅威ではなく、品目の数だけ
+別々の `Enable`/`Void` 履歴を持つ。文面は `generate::item_miscount_line` が
+`item.wrong_counter()`(実在する助数詞だが、その品目には間違っているもの)を使って生成し、
+`Verdict` が `Active`/`Suppressed` のどちらでも**まったく同じ形**になる——分かるのは
+テキストからではなく、その品目について聞いた噂を覚えているかどうかだけ。
+
+品目ごとの既定状態(上表)もわざと揃えていない: `HotDog` だけ `Repeat` と同じく初日から
+`Active`(項目10の噂を聞くまでは、三のつく日でも普段でも危険側)、残り3品目は
+`NightDelivery` と同じく `Suppressed`(それぞれの `Enable` 噂を聞くまでは安全側)。旗揚げ
+ゲームの「赤上げて、白上げて」——根幹のルールがどっちだったか一瞬わからなくなる感覚——を、
+品目という店に元からある軸に同じ `Enable`/`Void` の仕組みを繰り返し適用することで再現する
+のが狙い(`CLAUDE.md` §5「カタログの増やし方」)。
+
+品目の**正しい**数え方(助数詞: クロワッサン=個, 塩パン=個, ホットドッグ=本, 食パン=斤)は
+`generate::item_normal_line` が別途、通常業務行として流す——これがないと`item_miscount_line`
+の「間違った数え方」を読み比べる基準がなく、第4節の「異常は筆癖でバレる」という前提そのものが
+成立しない。
 
 終盤に示してよい事実はただ一つ: **客が語った最後の噂の中身が、プレイヤーの入店より後に起きた
 出来事を指している**こと。それ以上は何も語らない(`CLAUDE.md` §5)。
@@ -128,6 +164,7 @@ corruption の回復だけを厚くする。
 | 数え違い(「個」) | `ShouldReact` | 削除 | 常時有効 |
 | 記載漏れ | `ShouldReact` | 削除 | 常時有効 |
 | 反復(`Repeat`, `Active`時) | `ShouldReact` | 削除 | 項目2(三のつく日)で`Suppressed`になると`Normal`表示に切り替わり、正解も検印になる |
+| 品目の数え違い(`ItemMiscount`, `Active`時) | `ShouldReact` | 削除 | 品目ごとに独立(上記「品目の数え違い」参照)。文面は`Active`/`Suppressed`で変わらない |
 | 夜の納品(項目1で`Enable`) | `ShouldNotReact` | 静観 | 夜のフェーズのみ出現。項目1を聞いた当日だけ |
 | 呼びかけ(奇数分限定) | `ShouldNotReact` | 静観 | |
 | 呼ばれる(`IntrusionSlot`) | `ShouldNotReact` | 静観 | 押しても静観してもどちらも`resolve()`で判定されるが、正解は静観 |
@@ -157,6 +194,21 @@ corruption の回復だけを厚くする。
 - `H`/`L` キーとその入力ハンドラ、`ActivePane` リソース、パネル見出しの選択表示(色ではなく
   `CURSOR_MARK`の切り替えで示していた)を削除した。`J`/`K`/`Z`/`X` は常に焼成室の `Pending`
   だけを操作する
+
+## 2026-07-21 の設計変更(実装済み): 品目の数え違い
+
+上記と同日、禁忌集のバリエーションを増やす方針として「パン屋の品目という店に元からある軸へ、
+既存の `Enable`/`Void` の仕組みを繰り返し適用する」形を採用した(`CLAUDE.md` §5「カタログの
+増やし方」)。詳細は上記「品目の数え違い」参照。要点のみ:
+
+- `ItemKind`(`Croissant`/`ShioPan`/`HotDog`/`MilkLoaf`)と
+  `ThreatKind::ItemMiscount(ItemKind)` を追加——品目ごとに独立した脅威として扱う
+- 品目ごとに `Enable`/`Void` 噂を1つずつ(計4項目)追加し、`RuleLedger::verdict` の
+  フォールバックだけ `HotDog` を特別扱いして初日から `Active` にした——他の3品目は
+  `Suppressed` のまま、既定値をわざと揃えていない
+- `generate::item_miscount_line`(`Verdict`に応じて分類だけ変わる、文面は不変)と
+  `generate::item_normal_line`(品目の正しい数え方を示す通常業務行)を追加し、
+  `Weights` に `item_miscount` バケットを新設した(`weights_for` は `Kiln` 以外で常に0)
 
 ## 2026-07-20 の設計変更(実装済み)
 
