@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 
-use super::pane::{ActivePane, PaneRuntime};
+use super::pane::PaneRuntime;
 use super::pending::Pending;
-use crate::domain::Verb;
+use crate::domain::{Pane, Verb};
 
 /// How long a 削除 mark takes to sweep across the line, left to right.
 const DELETE_WIPE_SECONDS: f32 = 0.4;
@@ -15,31 +15,15 @@ fn verb_for_keycode(key: KeyCode) -> Option<Verb> {
     }
 }
 
-/// `H`/`L` switch which pane the rest of this module's input applies to,
-/// cycling through `domain::pane::ORDER` (外→売り場→焼成室, per the
-/// distance principle in CLAUDE.md §2). The two panes not selected keep
-/// scrolling and resolving in the background -- see `super::spawn::line_spawn`.
-pub(super) fn handle_pane_switch(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut active: ResMut<ActivePane>,
-) {
-    if keyboard.just_pressed(KeyCode::KeyH) {
-        active.0 = active.0.prev_in_order();
-    }
-    if keyboard.just_pressed(KeyCode::KeyL) {
-        active.0 = active.0.next_in_order();
-    }
-}
-
-/// `J`/`K`/削除/検印 all target whichever single pane is currently active --
-/// never the other two. A linear scan over three entities to find it is
-/// simpler than threading a direct lookup through, and just as cheap.
+/// `J`/`K`/削除/検印 all target 焼成室, and only 焼成室 -- CLAUDE.md §3.2:
+/// 操作できるのは焼成室だけで、画面を切り替えるという概念自体がない。 A
+/// linear scan over three entities to find it is simpler than threading a
+/// direct lookup through, and just as cheap.
 pub(super) fn handle_line_input(
     keyboard: Res<ButtonInput<KeyCode>>,
-    active: Res<ActivePane>,
     mut panes: Query<(&PaneRuntime, &mut Pending)>,
 ) {
-    let Some((_, mut pending)) = panes.iter_mut().find(|(runtime, _)| runtime.pane == active.0)
+    let Some((_, mut pending)) = panes.iter_mut().find(|(runtime, _)| runtime.pane == Pane::Kiln)
     else {
         return;
     };

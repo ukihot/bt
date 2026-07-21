@@ -1,8 +1,7 @@
 use bevy::prelude::*;
 
-use super::pane::ActivePane;
 use super::pending::{Pending, PendingLine};
-use crate::domain::{Pane, Verb};
+use crate::domain::Verb;
 
 pub(super) const LOG_FONT_SIZE: f32 = 16.0;
 /// Matches `bevy_text::LineHeight`'s own default (`RelativeToFont(1.2)`,
@@ -32,51 +31,95 @@ pub(super) fn container_height_px(capacity: usize) -> f32 {
 }
 
 /// A flex item's default `min_width` (`Val::Auto`) falls back to its
-/// content's own unbreakable width -- and every log line renders with
-/// `TextLayout::no_wrap()` (第3.1節: 1行=1件を画面上の見た目とも合わせる
-/// ため), so one long line (a rumor quoting a customer verbatim runs
-/// noticeably longer than this pane's other lines, e.g.) is exactly the kind
-/// of unbreakable content that can otherwise force its pane wider than its
-/// `flex_grow` share, skewing the whole 2x2/8:5 grid (第3.1節). Every
-/// width-bearing `Node` between the grid and an individual log line --
-/// pane boxes, their log containers (`setup::spawn_pane`), and each spawned
-/// line (`spawn::spawn_line_ui`) -- runs through this one function instead
-/// of re-deriving `min_width: Val::Px(0.0)` at each call site, so the
-/// invariant can't quietly go missing from just one of them.
+/// content's own unbreakable width -- and every log line renders as a row
+/// of single-character cells with no wrapping (第3.1節: 1行=1件を画面上の
+/// 見た目とも合わせるため), so one long line (a rumor quoting a customer
+/// verbatim runs noticeably longer than this pane's other lines, e.g.) is
+/// exactly the kind of unbreakable content that can otherwise force its
+/// pane wider than its `flex_grow` share, skewing the whole 2x2/8:5 grid
+/// (第3.1節). Every width-bearing `Node` between the grid and an individual
+/// log line's row -- pane boxes, their log containers (`setup::spawn_pane`),
+/// and each spawned line's row (`spawn::spawn_line_ui`) -- runs through this
+/// one function instead of re-deriving `min_width: Val::Px(0.0)` at each
+/// call site, so the invariant can't quietly go missing from just one of
+/// them.
 pub(super) fn shrinkable(mut node: Node) -> Node {
     node.min_width = Val::Px(0.0);
     node
 }
 
-/// Overwrites the leading `progress` fraction of `text` (by character count)
-/// with `DELETE_WIPE_GLYPH`, rounding up so any progress at all shows
-/// something immediately.
-fn wipe(text: &str, progress: f32) -> String {
-    if progress <= 0.0 {
-        return text.to_string();
+/// One character cell (or the cursor/mark control glyph) belonging to a
+/// pending line's row of cells (`super::spawn::spawn_line_ui`). A line used
+/// to be a single `Text` entity holding its whole string; splitting it into
+/// one small UI node per glyph is what lets a single character carry its
+/// own background fill or border independent of its neighbors --
+/// `TextSpan` can vary a run's color or font within one `Text`, but it
+/// isn't a UI node itself and can't paint a fill or a border. `super::glitch`
+/// is the only thing that ever touches a cell's `BackgroundColor`/`Node
+/// ::border`/`BorderColor`; this module only ever touches `Text` (content)
+/// and, via `super::glitch::ambient_shimmer`, `TextColor`.
+#[derive(Component)]
+pub(super) struct LineCells {
+    pub(super) cursor: Entity,
+    pub(super) mark: Entity,
+    pub(super) chars: Vec<Entity>,
+}
+
+/// Per-character glyphs for a line's body -- the leading `delete_wipe`
+/// fraction (by character count) is replaced with `DELETE_WIPE_GLYPH` when
+/// the line is marked for deletion, rounding up so any progress at all
+/// shows something immediately. Otherwise just the line's own characters.
+fn body_glyphs(line: &PendingLine) -> Vec<char> {
+    let chars: Vec<char> = line.text.chars().collect();
+    if line.mark != Some(Verb::Delete) || line.delete_wipe <= 0.0 {
+        return chars;
     }
-    let chars: Vec<char> = text.chars().collect();
-    let covered = ((chars.len() as f32) * progress).ceil() as usize;
+    let covered = ((chars.len() as f32) * line.delete_wipe).ceil() as usize;
     chars
-        .iter()
+        .into_iter()
         .enumerate()
-        .map(|(i, ch)| if i < covered { DELETE_WIPE_GLYPH } else { *ch })
+        .map(|(i, ch)| if i < covered { DELETE_WIPE_GLYPH } else { ch })
         .collect()
 }
 
-/// The mark glyph and body text for a line, independent of cursor state.
-fn render_line_body(line: &PendingLine) -> (&'static str, String) {
-    match line.mark {
-        Some(Verb::Delete) => (MARK_BLANK, wipe(&line.text, line.delete_wipe)),
-        Some(Verb::Stamp) => (MARK_STAMP, line.text.clone()),
-        None => (MARK_BLANK, line.text.clone()),
+fn mark_glyph(mark: Option<Verb>) -> &'static str {
+    match mark {
+        Some(Verb::Stamp) => MARK_STAMP,
+        _ => MARK_BLANK,
     }
 }
 
-fn render_pending_line(pending: &Pending, index: usize, line: &PendingLine) -> String {
-    let cursor = if index == pending.cursor { CURSOR_MARK } else { CURSOR_BLANK };
-    let (mark, body) = render_line_body(line);
-    format!("{cursor}{mark}{body}")
+/// Writes `value` into a cell only if it actually differs from what's
+/// already there. `Text`'s `DerefMut` marks its entity for reshaping
+/// unconditionally on every write, and with one entity per *character* now
+/// (`LineCells`) rather than per line, touching all of them every frame
+/// regardless of whether anything changed would multiply the per-frame
+/// reshape cost by a visible line's length for nothing -- most cells are
+/// identical frame to frame; only the cursor row and whatever
+/// wipe/glitch/shimmer is actively animating actually differ.
+fn set_cell_text(texts: &mut Query<&mut Text>, entity: Entity, value: &str) {
+    if let Ok(mut text) = texts.get_mut(entity)
+        && text.0 != value
+    {
+        text.0 = value.to_string();
+    }
+}
+
+/// Writes every cell of one line -- cursor glyph, mark glyph, and body --
+/// from `line`'s current state. Shared by the per-frame sync below and by
+/// `render_resolved_line`'s one-shot freeze.
+fn render_cells(
+    cells: &LineCells,
+    cursor_glyph: &str,
+    line: &PendingLine,
+    texts: &mut Query<&mut Text>,
+) {
+    set_cell_text(texts, cells.cursor, cursor_glyph);
+    set_cell_text(texts, cells.mark, mark_glyph(line.mark));
+    let mut buf = [0u8; 4];
+    for (cell, ch) in cells.chars.iter().zip(body_glyphs(line)) {
+        set_cell_text(texts, *cell, ch.encode_utf8(&mut buf));
+    }
 }
 
 /// Once a line leaves `Pending` -- aged out or otherwise resolved -- it
@@ -84,44 +127,33 @@ fn render_pending_line(pending: &Pending, index: usize, line: &PendingLine) -> S
 /// what happened, but the cursor must never be left on it. Without this,
 /// whichever row the cursor happened to be on at the moment it aged out
 /// keeps showing `CURSOR_MARK` forever, since it's no longer in
-/// `pending.lines` for `sync_log_display` to ever touch again.
-pub(super) fn render_resolved_line(line: &PendingLine) -> String {
-    let (mark, body) = render_line_body(line);
-    format!("{CURSOR_BLANK}{mark}{body}")
+/// `pending.lines` for `sync_log_display` to ever touch again. Called once,
+/// right when a line ages out, and never again -- its cells (and whatever
+/// `super::glitch`/`ambient_shimmer` last left on them) are simply never
+/// visited by anything past this point.
+pub(super) fn render_resolved_line(
+    line: &PendingLine,
+    cells: &LineCells,
+    texts: &mut Query<&mut Text>,
+) {
+    render_cells(cells, CURSOR_BLANK, line, texts);
 }
 
 /// Re-derives every pending row's displayed text from `pending` every
 /// frame -- the source of truth -- rather than only on the frames something
-/// changed. This is also what makes `super::glitch::glitch_flicker`'s
-/// one-frame corruption self-healing: whatever it overwrites gets put back
-/// correctly right here on the very next frame. Runs once for all three
-/// panes rather than being copied per pane -- each `Pending` is just
-/// another match for the query.
-pub(super) fn sync_log_display(panes: Query<&Pending>, mut texts: Query<&mut Text>) {
+/// changed. Runs once for all three panes rather than being copied per
+/// pane -- each `Pending` is just another match for the query.
+pub(super) fn sync_log_display(
+    panes: Query<&Pending>,
+    line_cells: Query<&LineCells>,
+    mut texts: Query<&mut Text>,
+) {
     for pending in &panes {
         for (i, line) in pending.lines.iter().enumerate() {
-            if let Ok(mut text) = texts.get_mut(line.entity) {
-                text.0 = render_pending_line(pending, i, line);
-            }
+            let Ok(cells) = line_cells.get(line.entity) else { continue };
+            let cursor = if i == pending.cursor { CURSOR_MARK } else { CURSOR_BLANK };
+            render_cells(cells, cursor, line, &mut texts);
         }
-    }
-}
-
-/// Marks a pane's title-row text (spawned in `super::setup`), so
-/// `sync_pane_headers` knows which entity to update.
-#[derive(Component)]
-pub(super) struct PaneHeader(pub(super) Pane);
-
-/// The selected pane is marked with the same `CURSOR_MARK` convention as a
-/// selected line, not a color (第8節: 色による強調は禁止) -- this is the
-/// only visible sign that `H`/`L` did anything.
-pub(super) fn sync_pane_headers(
-    active: Res<ActivePane>,
-    mut headers: Query<(&PaneHeader, &mut Text)>,
-) {
-    for (header, mut text) in &mut headers {
-        let cursor = if header.0 == active.0 { CURSOR_MARK } else { CURSOR_BLANK };
-        text.0 = format!("{cursor}{}", header.0.label());
     }
 }
 
@@ -129,20 +161,41 @@ pub(super) fn sync_pane_headers(
 mod tests {
     use super::*;
 
-    #[test]
-    fn wipe_leaves_text_untouched_at_zero_progress() {
-        assert_eq!(wipe("abc", 0.0), "abc");
+    fn line_with(text: &str, mark: Option<Verb>, delete_wipe: f32) -> PendingLine {
+        PendingLine {
+            entity: Entity::PLACEHOLDER,
+            text: text.to_string(),
+            classification: crate::domain::Classification::Normal,
+            relief: 0.0,
+            mark,
+            delete_wipe,
+        }
     }
 
     #[test]
-    fn wipe_covers_the_whole_line_at_full_progress() {
-        assert_eq!(wipe("abc", 1.0), "═══");
+    fn body_glyphs_leaves_text_untouched_without_a_delete_mark() {
+        let line = line_with("abc", None, 0.0);
+        assert_eq!(body_glyphs(&line), vec!['a', 'b', 'c']);
     }
 
     #[test]
-    fn wipe_rounds_up_so_partial_progress_is_visible_immediately() {
+    fn body_glyphs_covers_the_whole_line_at_full_wipe_progress() {
+        let line = line_with("abc", Some(Verb::Delete), 1.0);
+        assert_eq!(body_glyphs(&line), vec!['═', '═', '═']);
+    }
+
+    #[test]
+    fn body_glyphs_rounds_up_so_partial_progress_is_visible_immediately() {
         // 1/3 of 3 chars rounds up to covering 1, not 0.
-        assert_eq!(wipe("abc", 0.01), "═bc");
+        let line = line_with("abc", Some(Verb::Delete), 0.01);
+        assert_eq!(body_glyphs(&line), vec!['═', 'b', 'c']);
+    }
+
+    #[test]
+    fn mark_glyph_only_shows_the_stamp_mark() {
+        assert_eq!(mark_glyph(Some(Verb::Stamp)), MARK_STAMP);
+        assert_eq!(mark_glyph(Some(Verb::Delete)), MARK_BLANK);
+        assert_eq!(mark_glyph(None), MARK_BLANK);
     }
 
     #[test]

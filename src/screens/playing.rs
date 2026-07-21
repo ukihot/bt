@@ -4,11 +4,12 @@
 //! `pending` owns the cursor/eviction window (the part most worth
 //! unit-testing in isolation), `render` turns state into text, `spawn`
 //! drives new lines in from `GameData` across all three panes at once,
-//! `input`/`pause` handle keyboard input (including which pane is active),
-//! `intrusion` is 呼ばれる's own unreachable slot, `glitch` is the purely
-//! cosmetic CRT flicker, `day_indicator` is the 7-segment-style day counter
-//! next to `Kiln`, and `corruption` is the loss condition. `setup` ties the
-//! screen's entities and resources together for `OnEnter`/`OnExit`.
+//! `input`/`pause` handle keyboard input (焼成室のみが操作対象、第3.2節 --
+//! there is no pane-switching input at all), `intrusion` is 呼ばれる's own
+//! unreachable slot, `glitch` is the purely cosmetic, occasional CRT
+//! artifact (glyph/invert/frame), `day_indicator` is the 7-segment-style day
+//! counter next to `Kiln`, and `corruption` is the loss condition. `setup`
+//! ties the screen's entities and resources together for `OnEnter`/`OnExit`.
 
 mod corruption;
 mod day_indicator;
@@ -38,13 +39,11 @@ impl Plugin for PlayingPlugin {
                     spawn::phase_tick,
                     spawn::line_spawn,
                     intrusion::spawn_intrusion,
-                    input::handle_pane_switch,
                     input::handle_line_input,
                     input::animate_delete_wipe,
                     intrusion::resolve_intrusion,
                     corruption::corruption_check,
                     render::sync_log_display,
-                    render::sync_pane_headers,
                     day_indicator::sync_day_indicator,
                     glitch::glitch_flicker,
                 )

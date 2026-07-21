@@ -7,10 +7,7 @@ use super::pane::Pane;
 use super::phase::Phase;
 use super::rules::{Context, RuleLedger, Verdict};
 use super::rumors::{ThreatKind, rumor_line};
-use super::threats::{
-    back_door_threat_line, closing_time_threat_line, deviation_threat_line,
-    night_delivery_threat_line,
-};
+use super::threats::{deviation_threat_line, night_delivery_threat_line};
 use super::timestamp::{even_minute_of, fill_n, timestamp};
 use super::verb::Verb;
 use super::zone::Zone;
@@ -242,19 +239,21 @@ pub fn rule_reset_notice(clock: DayClock, rng: &mut ThreadRng) -> LogLine {
     LogLine::new(text, Classification::Normal).scripted()
 }
 
-/// How strongly each of a pane's five possible content buckets should be
-/// weighted this tick. Every pane can roll every bucket (第3.3節: no
-/// classification is off-limits anywhere) -- a bucket at weight 0 just never
-/// wins, which is how `Kiln`-only content (deviation) and `Floor`-only
-/// content (rumor) stay exclusive without a separate code path.
+/// How strongly each of a pane's content buckets should be weighted this
+/// tick. `Kiln` is the only pane that ever rolls `deviation`/`repeat`/
+/// `taboo_event` -- 焼成室以外に操作対象は存在しない(第3.2節)ので、
+/// `Outside`/`Floor` have no "correct action" for a threat bucket to mean
+/// anything (`screens::playing::spawn::line_spawn` never calls `resolve()`
+/// for their evicted lines at all). Those two panes' buckets simply stay at
+/// weight 0 rather than needing a separate code path.
 struct Weights {
     normal: u32,
     rumor: u32,
     deviation: u32,
     repeat: u32,
-    /// The one pane-specific 禁忌 (第5節) that only exists once its rumor
-    /// has actually been heard this run -- 0 until then, so the event
-    /// simply never happens rather than happening but reading as `Normal`.
+    /// 夜の納品(禁忌#2): only exists once its rumor has actually been
+    /// heard this run -- 0 until then, so the event simply never happens
+    /// rather than happening but reading as `Normal`.
     taboo_event: u32,
     call: u32,
 }
@@ -291,32 +290,18 @@ fn weights_for(
     // "pointed at" gets a flat bonus on top of its own home-turf skew below.
     let zone_bonus = if pane.matches_zone(zone) { 2 } else { 1 };
 
-    // 禁忌#2・#7・#8: それぞれ一つの画面にしか出ない、`RuleLedger`が有効と
-    // 判定して初めて起こり得る固有の異常。夜の納品だけは時間帯まで揃わない
-    // と現れない -- 噂の内容そのものが夜限定の作法だから(この時間帯条件は
-    // ルール台帳ではなくここに残す: 台帳が答えるのは「有効かどうか」だけ)。
-    let taboo_event = match pane {
-        Pane::Kiln => {
-            if is_active(ledger, pane, ThreatKind::NightDelivery, day) && phase == Phase::Night {
-                14
-            } else {
-                0
-            }
-        }
-        Pane::Floor => {
-            if is_active(ledger, pane, ThreatKind::ClosingTime, day) {
-                10
-            } else {
-                0
-            }
-        }
-        Pane::Outside => {
-            if is_active(ledger, pane, ThreatKind::BackDoor, day) {
-                10
-            } else {
-                0
-            }
-        }
+    // 禁忌#2(夜の納品): 焼成室固有、`RuleLedger`が有効と判定して初めて
+    // 起こり得る異常。時間帯まで揃わないと現れない -- 噂の内容そのものが
+    // 夜限定の作法だから(この時間帯条件はルール台帳ではなくここに残す:
+    // 台帳が答えるのは「有効かどうか」だけ)。焼成室以外は操作対象では
+    // ないので(第3.2節)、そもそもこのバケットを持たない。
+    let taboo_event = if pane == Pane::Kiln
+        && is_active(ledger, pane, ThreatKind::NightDelivery, day)
+        && phase == Phase::Night
+    {
+        14
+    } else {
+        0
     };
 
     match pane {
@@ -332,31 +317,26 @@ fn weights_for(
             normal,
             rumor,
             deviation: 0,
-            repeat: react_base * zone_bonus,
-            taboo_event,
+            repeat: 0,
+            taboo_event: 0,
             call: not_react_base / 2,
         },
         Pane::Outside => Weights {
             normal,
             rumor: 0,
             deviation: 0,
-            repeat: react_base / 4,
-            taboo_event,
+            repeat: 0,
+            taboo_event: 0,
             call: not_react_base * zone_bonus,
         },
     }
 }
 
-/// Builds the `Repeat`/`OutsideRepeat` bucket's line once its `Verdict` is
-/// known. `kind` distinguishes the two ways "not currently a threat" renders
-/// (保持すべき既存の細かい挙動): `Repeat` still visibly repeats the same
-/// text as ordinary business when voided (三のつく日, 第5節), while
-/// `OutsideRepeat` doesn't exist as a bucket at all until enabled, so it
-/// falls all the way back to an independent normal line instead of ever
-/// building a repeated-text line. `relief` (`RuleLedger::relief_bonus`) is
-/// only ever nonzero when `verdict` is `Active` -- see `Effect::Relieve`.
+/// Builds the `Repeat` bucket's line once its `Verdict` is known -- only
+/// ever reached for `Kiln` (`weights_for` keeps `repeat` at 0 everywhere
+/// else). `relief` (`RuleLedger::relief_bonus`) is only ever nonzero when
+/// `verdict` is `Active` -- see `Effect::Relieve`.
 fn repeated_line(
-    kind: ThreatKind,
     verdict: Verdict,
     relief: f32,
     last_normal: Option<&str>,
@@ -376,9 +356,6 @@ fn repeated_line(
             }
             None => normal_line_for(pane, clock, corruption, rng),
         },
-        Verdict::Suppressed if kind == ThreatKind::OutsideRepeat => {
-            normal_line_for(pane, clock, corruption, rng)
-        }
         Verdict::Suppressed => match last_normal {
             Some(text) => LogLine::new(text.to_string(), Classification::Normal),
             None => normal_line_for(pane, clock, corruption, rng),
@@ -409,19 +386,16 @@ pub fn generate(
     } else if roll < w.normal + w.rumor + w.deviation {
         deviation_threat_line(clock, rng)
     } else if roll < w.normal + w.rumor + w.deviation + w.repeat {
-        // 外画面だけは反復の判定基準が別(禁忌#9、噂を聞くまで無害) --
-        // 焼成室・売り場は三のつく日の禁忌(#3)で無効化され得る通常の反復。
-        let kind =
-            if pane == Pane::Outside { ThreatKind::OutsideRepeat } else { ThreatKind::Repeat };
-        let verdict = ledger.verdict(pane, kind, Context { day });
-        let relief = ledger.relief_bonus(kind);
-        repeated_line(kind, verdict, relief, last_normal, pane, clock, corruption, rng)
+        // 三のつく日の禁忌(#3)で無効化され得る、焼成室の通常の反復
+        // (`weights_for` が `repeat` を焼成室以外では常に0にしているので、
+        // ここに来るのは常に `Pane::Kiln`)。
+        let verdict = ledger.verdict(pane, ThreatKind::Repeat, Context { day });
+        let relief = ledger.relief_bonus(ThreatKind::Repeat);
+        repeated_line(verdict, relief, last_normal, pane, clock, corruption, rng)
     } else if roll < w.normal + w.rumor + w.deviation + w.repeat + w.taboo_event {
-        match pane {
-            Pane::Kiln => night_delivery_threat_line(clock, rng),
-            Pane::Floor => closing_time_threat_line(clock),
-            Pane::Outside => back_door_threat_line(clock, rng),
-        }
+        // `weights_for` が `taboo_event` を焼成室以外では常に0にしている
+        // ので、ここに来るのも常に `Pane::Kiln`。
+        night_delivery_threat_line(clock, rng)
     } else {
         call_line(clock, zone, rng)
     }

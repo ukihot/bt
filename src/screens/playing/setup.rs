@@ -2,12 +2,12 @@ use bevy::prelude::*;
 use bevy::text::FontSize;
 
 use super::day_indicator::spawn_day_indicator;
-use super::glitch::GlitchTimer;
+use super::glitch::{ActiveGlitch, GlitchTimer};
 use super::intrusion::{ActiveIntrusion, IntrusionSlot};
-use super::pane::{ActivePane, PaneRuntime};
+use super::pane::PaneRuntime;
 use super::pause::{PauseRoot, PauseState};
 use super::pending::Pending;
-use super::render::{CURSOR_BLANK, PaneHeader, container_height_px, shrinkable};
+use super::render::{CURSOR_BLANK, CURSOR_MARK, container_height_px, shrinkable};
 use super::spawn::LogUi;
 use crate::domain::{LineFont, Pane, Phase};
 use crate::fonts::Fonts;
@@ -46,10 +46,14 @@ fn spawn_pane(
     node.padding = px(14).all();
     node.justify_content = JustifyContent::SpaceBetween;
 
+    // 焼成室だけが操作対象(第3.2節)なので、その見出しにだけ常時
+    // `CURSOR_MARK` を立てておく——H/L で切り替わる選択状態ではなく、
+    // どのパネルが操作対象かを示す固定の目印(色ではなく文字で示す、
+    // 第8節: 色による強調は禁止)。
+    let cursor = if pane == Pane::Kiln { CURSOR_MARK } else { CURSOR_BLANK };
     let header = commands
         .spawn((
-            PaneHeader(pane),
-            Text::new(format!("{CURSOR_BLANK}{}", pane.label())),
+            Text::new(format!("{cursor}{}", pane.label())),
             TextFont { font: fonts.normal().into(), font_size: FontSize::Px(14.0), ..default() },
             TextColor(DIM),
         ))
@@ -215,8 +219,7 @@ pub(super) fn setup(mut commands: Commands, fonts: Res<Fonts>, game_data: Res<Ga
             ..default()
         })
         .with_children(|parent| {
-            for label in ["削除 Z", "検印 X", "移動 J/K", "画面切替 H/L", "一時停止 ESC"]
-            {
+            for label in ["削除 Z", "検印 X", "移動 J/K", "一時停止 ESC"] {
                 parent.spawn((
                     Text::new(label),
                     TextFont {
@@ -234,7 +237,7 @@ pub(super) fn setup(mut commands: Commands, fonts: Res<Fonts>, game_data: Res<Ga
     commands.entity(root).add_children(&[content, legend]);
     commands.insert_resource(PauseState::default());
     commands.insert_resource(GlitchTimer::default());
-    commands.insert_resource(ActivePane::default());
+    commands.insert_resource(ActiveGlitch::default());
     commands.insert_resource(ActiveIntrusion::default());
 }
 
@@ -251,6 +254,6 @@ pub(super) fn teardown(
     }
     commands.remove_resource::<PauseState>();
     commands.remove_resource::<GlitchTimer>();
-    commands.remove_resource::<ActivePane>();
+    commands.remove_resource::<ActiveGlitch>();
     commands.remove_resource::<ActiveIntrusion>();
 }

@@ -4,25 +4,28 @@ use super::zone::Zone;
 const GOLDEN_RATIO: f32 = 1.618_034;
 
 /// One of the three simultaneous camera feeds the player watches from the
-/// counter. Each has its own register (see `domain::generate`), its own
-/// pacing, and its own "primary" anomaly -- but per CLAUDE.md §3.3, no
-/// classification is exclusive to any one pane; `weights` only skews the
-/// odds.
+/// counter. Each has its own register (see `domain::generate`) and its own
+/// pacing. Only `Kiln` is ever operable (CLAUDE.md §3.2: 操作できるのは
+/// 焼成室だけで、画面を切り替えるという概念自体がない) -- `Outside`/`Floor`
+/// only ever generate `Classification::Normal` flavor (plus, for `Floor`,
+/// the rumors that rewrite `Kiln`'s rules), never reactable threat content,
+/// since there's no cursor on either screen for a "correct action" to mean
+/// anything (see `screens::playing::spawn::line_spawn`, which never calls
+/// `resolve()` for their evicted lines at all).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pane {
     /// 焼成室. The baker's own record -- technical, terse. Home of the
-    /// 表記の乱れ・数え違い・記載漏れ deviations and the 禁忌集 memos.
+    /// 表記の乱れ・数え違い・記載漏れ deviations, the 反復, and the 禁忌集
+    /// memos. The only pane the player ever acts on.
     Kiln,
-    /// 外. A deadpan fixed-point watch, mostly "異常なし". Home of 呼びかけ.
+    /// 外. A deadpan fixed-point watch, mostly "異常なし" -- a read-only
+    /// status display (第3.5節: 脅威との距離の体温計), not a site of its own
+    /// corruption risk.
     Outside,
-    /// 売り場. The clerk's customer-facing log, in です/ます. Home of 反復.
+    /// 売り場. The clerk's customer-facing log, in です/ます -- a read-only
+    /// rule-change source (第3.4節), not a site of its own corruption risk.
     Floor,
 }
-
-/// Cycle order for `H`/`L`, matching CLAUDE.md's distance principle
-/// (外 → 売り場 → 焼成室): `L` always steps toward the pane currently
-/// favored by `Zone`'s escalation, `H` steps back out toward the perimeter.
-pub const ORDER: [Pane; 3] = [Pane::Outside, Pane::Floor, Pane::Kiln];
 
 impl Pane {
     pub fn label(self) -> &'static str {
@@ -31,16 +34,6 @@ impl Pane {
             Pane::Outside => "外",
             Pane::Floor => "売り場",
         }
-    }
-
-    pub fn next_in_order(self) -> Self {
-        let i = ORDER.iter().position(|&p| p == self).unwrap();
-        ORDER[(i + 1) % ORDER.len()]
-    }
-
-    pub fn prev_in_order(self) -> Self {
-        let i = ORDER.iter().position(|&p| p == self).unwrap();
-        ORDER[(i + ORDER.len() - 1) % ORDER.len()]
     }
 
     /// How many lines this pane's cursor window holds at once. `Kiln` is
@@ -84,19 +77,6 @@ impl Pane {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn next_and_prev_in_order_cycle_through_all_three() {
-        for &pane in &ORDER {
-            assert_eq!(pane.next_in_order().prev_in_order(), pane);
-            assert_eq!(pane.prev_in_order().next_in_order(), pane);
-        }
-        // L from the outermost pane steps inward, toward Kiln.
-        assert_eq!(Pane::Outside.next_in_order(), Pane::Floor);
-        assert_eq!(Pane::Floor.next_in_order(), Pane::Kiln);
-        // ...and wraps back out past Kiln.
-        assert_eq!(Pane::Kiln.next_in_order(), Pane::Outside);
-    }
 
     #[test]
     fn matches_zone_follows_the_distance_principle() {

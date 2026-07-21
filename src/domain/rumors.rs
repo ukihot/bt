@@ -10,21 +10,19 @@ use super::timestamp::{even_minute_of, fill_name, timestamp};
 /// Which recurring anomaly pattern a rumor's effect (below) talks about.
 /// Replaces what used to be a scattered set of independent bools and
 /// per-pane match arms in `generate.rs`/`threats.rs` with one name every
-/// rule and every threat-generator agree on.
+/// rule and every threat-generator agree on. Every variant here is 焼成室
+/// content only (第3.2節: 操作できるのは焼成室だけ) -- `Outside`/`Floor`
+/// used to have their own reactable variants (`OutsideRepeat`/`ClosingTime`/
+/// `BackDoor`), but those required a correct action on panes that were never
+/// actually operable, so they're gone (2026-07-21) rather than kept as
+/// mechanically-inert flavor -- see CLAUDE.md §9.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ThreatKind {
-    /// 焼成室・売り場の既定の反復 -- reactable from day one, not gated by
-    /// any rumor; only ever *voided*, never *enabled*.
+    /// 焼成室の既定の反復 -- reactable from day one, not gated by any
+    /// rumor; only ever *voided*, never *enabled*.
     Repeat,
-    /// 外画面固有の反復(禁忌#9) -- the mirror image of `Repeat`: impossible
-    /// until its rumor enables it.
-    OutsideRepeat,
     /// 夜の納品(禁忌#2)
     NightDelivery,
-    /// 閉店時間(禁忌#7)
-    ClosingTime,
-    /// 裏口(禁忌#8)
-    BackDoor,
 }
 
 /// A condition a `Void` effect can be guarded on. Only one variant exists
@@ -44,12 +42,7 @@ impl Condition {
     }
 }
 
-/// What a rumor does to the ruleset the moment it's spoken (第3.4節). Note
-/// what's *not* here: no `CustomerId`. A rumor's mechanical personality is
-/// fixed catalog data, but who actually voices it is rolled fresh every run
-/// (`rules::RuleLedger`/`Cast`) -- so effects that need to name a speaker
-/// (`Discredit`) point at another *catalog entry*, not a customer, and get
-/// resolved through that run's `Cast` at query time.
+/// What a rumor does to the ruleset the moment it's spoken (第3.4節).
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Effect {
     /// Pure foreshadowing -- describes a rule that's already always active
@@ -76,11 +69,6 @@ pub enum Effect {
     /// threat's physical proximity, which this doesn't touch -- see
     /// `LogLine::relieved`).
     Relieve { threat: ThreatKind, bonus: f32 },
-    /// Declares whoever this run's `Cast` has voicing `target` unreliable --
-    /// every `Enable`/`Void`/`Relieve` sourced from *their* rumors stops
-    /// applying from this point on, as if never spoken. See
-    /// `RuleLedger::is_discredited`.
-    Discredit { target: RumorId },
 }
 
 pub type RumorId = usize;
@@ -91,12 +79,6 @@ pub struct RumorDef {
     pub body: &'static str,
     pub effect: Effect,
 }
-
-/// Index into `CATALOG` of the 裏口 rumor (禁忌#8) that the `Discredit`
-/// entry later casts doubt on. Named and checked by
-/// `discredit_target_is_still_the_back_door_rumor` so that reordering
-/// `CATALOG` fails a test instead of silently discrediting the wrong rumor.
-const BACK_DOOR_RUMOR: RumorId = 7;
 
 /// 禁忌集(第5節): 売り場の客の噂話・世間話に紛れて流れる。店主のメモとい
 /// う体裁はもう取らない -- 焼成室には一切書かれず、読むだけの画面(売り場)
@@ -130,23 +112,6 @@ pub const CATALOG: &[RumorDef] = &[
         effect: Effect::None,
     },
     RumorDef {
-        body: "常連の{name}さんが「この店、閉店時間だけは聞かないほうがいいですよ」と、困ったように話していらっしゃいました",
-        effect: Effect::Enable { pane: Pane::Floor, threat: ThreatKind::ClosingTime },
-    },
-    RumorDef {
-        // BACK_DOOR_RUMOR -- keep index 7 in sync with the constant above.
-        body: "裏口にだけは近づかないほうがいいのだと、{name}さんがめずらしく真剣な声でおっしゃっていました",
-        effect: Effect::Enable { pane: Pane::Outside, threat: ThreatKind::BackDoor },
-    },
-    RumorDef {
-        body: "{name}さんが「外の異常なしは、二回続けて信じてはいけませんよ」と、どこか怯えた様子でおっしゃっていました",
-        effect: Effect::Enable { pane: Pane::Outside, threat: ThreatKind::OutsideRepeat },
-    },
-    RumorDef {
-        body: "裏口の話をしていた人のことは、あまり当てにしないほうがいいと、{name}さんが耳打ちしてきました",
-        effect: Effect::Discredit { target: BACK_DOOR_RUMOR },
-    },
-    RumorDef {
         body: "{name}さんが「帳面の同じ行に気づいたら、すぐに消してしまうと楽になりますよ」と、にっこり教えてくれました",
         effect: Effect::Relieve { threat: ThreatKind::Repeat, bonus: 3.0 },
     },
@@ -175,24 +140,6 @@ mod tests {
     }
 
     #[test]
-    fn discredit_targets_point_at_a_real_other_catalog_entry() {
-        for (id, def) in CATALOG.iter().enumerate() {
-            if let Effect::Discredit { target } = def.effect {
-                assert!(target < CATALOG.len());
-                assert_ne!(target, id, "a rumor cannot discredit itself");
-            }
-        }
-    }
-
-    #[test]
-    fn discredit_target_is_still_the_back_door_rumor() {
-        assert!(matches!(
-            CATALOG[BACK_DOOR_RUMOR].effect,
-            Effect::Enable { threat: ThreatKind::BackDoor, .. }
-        ));
-    }
-
-    #[test]
     fn rumor_line_records_every_pick_into_the_ledger_fills_the_speaker_name_and_stamps_the_time() {
         let mut ledger = RuleLedger::new();
         let mut rng = rand::rng();
@@ -202,8 +149,8 @@ mod tests {
             assert!(!line.text.contains("{name}"));
             assert!(line.text.starts_with("10:30 "));
         }
-        // 200 draws from an 11-entry catalog should have hit every one of the
-        // gated entries at least once.
+        // 200 draws from a 7-entry catalog should have hit the one gated
+        // entry at least once.
         assert_eq!(
             ledger.verdict(Pane::Kiln, ThreatKind::NightDelivery, Context { day: 1 }),
             super::super::rules::Verdict::Active

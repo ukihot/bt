@@ -2,21 +2,60 @@ use std::collections::VecDeque;
 
 use bevy::prelude::*;
 use bevy::text::FontSize;
+use rand::RngExt;
 
 use super::pane::PaneRuntime;
 use super::pending::{Pending, PendingLine};
-use super::render::{CURSOR_BLANK, LOG_FONT_SIZE, MARK_BLANK, render_resolved_line, shrinkable};
+use super::render::{
+    CURSOR_BLANK, LOG_FONT_SIZE, LineCells, MARK_BLANK, render_resolved_line, shrinkable,
+};
 use crate::domain::{self, Classification, LogLine, Pane};
 use crate::fonts::Fonts;
 use crate::game_data::GameData;
-use crate::theme::FG;
+use crate::theme::{DIM, FG};
 
-const MAX_SPAWNED: usize = 400;
+/// Odds that any one body character gets a faint permanent `DIM` tint
+/// instead of `FG` -- decided once, when the line spawns, and never
+/// animated afterward. An earlier version of this texture ran as a
+/// continuously-updating wave shared by every line on screen at once; it
+/// looked identical line to line and read as constant flicker rather than
+/// texture, so it's gone (CLAUDE.md §8 例外3). A static per-line-random
+/// scatter of dim characters gives the same "uneven ink" impression -- no
+/// two lines' pattern matches, since each line draws its own fresh `rng` --
+/// without ever moving or flashing.
+const TEXTURE_DIM_CHANCE: f64 = 0.1;
+
+/// Cap on retained history rows per pane, once a line has aged out of
+/// `Pending` and become read-only. Each row is now several entities (one
+/// per character -- see `LineCells`) rather than the single `Text` entity a
+/// line used to be, so this stays far lower than that older count would
+/// suggest: these rows are already scrolled out of the container's clipped
+/// view and never touched again, so a small cap costs nothing visible.
+const MAX_SPAWNED: usize = 60;
 
 #[derive(Component)]
 pub(super) struct LogUi {
     pub(super) container: Entity,
     pub(super) spawned: VecDeque<Entity>,
+}
+
+/// Spawns one character-sized UI cell: its own `Node`/`Text`/`TextFont`/
+/// `TextColor`, plus a transparent `BackgroundColor`/`BorderColor` pair
+/// that only `super::glitch`'s ambient CRT artifacts ever light up.
+fn spawn_cell(commands: &mut Commands, font: &Handle<Font>, text: &str, color: Color) -> Entity {
+    commands
+        .spawn((
+            Text::new(text),
+            TextFont {
+                font: font.clone().into(),
+                font_size: FontSize::Px(LOG_FONT_SIZE),
+                ..default()
+            },
+            TextColor(color),
+            BackgroundColor::DEFAULT,
+            BorderColor::DEFAULT,
+        ))
+        .id()
 }
 
 pub(super) fn spawn_line_ui(
@@ -25,27 +64,46 @@ pub(super) fn spawn_line_ui(
     fonts: &Fonts,
     line: &LogLine,
 ) -> Entity {
+    let font = fonts.for_line(line.font);
+    // Cursor/mark are UI chrome, not log text -- always plain `FG`, never
+    // textured.
+    let cursor = spawn_cell(commands, &font, CURSOR_BLANK, FG);
+    let mark = spawn_cell(commands, &font, MARK_BLANK, FG);
+    let mut buf = [0u8; 4];
+    let mut rng = rand::rng();
+    let chars: Vec<Entity> = line
+        .text
+        .chars()
+        .map(|ch| {
+            let color = if rng.random_bool(TEXTURE_DIM_CHANCE) { DIM } else { FG };
+            spawn_cell(commands, &font, ch.encode_utf8(&mut buf), color)
+        })
+        .collect();
+
+    let mut cell_entities = Vec::with_capacity(chars.len() + 2);
+    cell_entities.push(cursor);
+    cell_entities.push(mark);
+    cell_entities.extend(chars.iter().copied());
+
     let entity = commands
         .spawn((
-            Text::new(format!("{CURSOR_BLANK}{MARK_BLANK}{}", line.text)),
+            LineCells { cursor, mark, chars },
             // `Outside`/`Floor` are narrow enough that a long line would
             // otherwise wrap onto a second visual row, which desyncs what's
             // on screen from `Pending`'s one-row-per-line bookkeeping (its
-            // capacity counts *lines*, not wrapped rows). Clipping the tail
-            // instead (via the container's own `Overflow::clip`) keeps that
-            // invariant exact regardless of pane width.
-            TextLayout::no_wrap(),
-            TextFont {
-                font: fonts.for_line(line.font).into(),
-                font_size: FontSize::Px(LOG_FONT_SIZE),
+            // capacity counts *lines*, not wrapped rows). A flex row's
+            // default `FlexWrap::NoWrap` keeps the whole line on one row
+            // regardless of pane width, mirroring the old `TextLayout::
+            // no_wrap()` -- clipping the tail instead, via the container's
+            // own `Overflow::clip`, keeps that invariant exact.
+            shrinkable(Node {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Row,
                 ..default()
-            },
-            TextColor(FG),
-            // Every spawned line gets its own width-safe `Node` too, not
-            // just its ancestors -- see `render::shrinkable`.
-            shrinkable(Node { width: Val::Percent(100.0), ..default() }),
+            }),
         ))
         .id();
+    commands.entity(entity).add_children(&cell_entities);
     commands.entity(log_ui.container).add_child(entity);
     log_ui.spawned.push_back(entity);
     if log_ui.spawned.len() > MAX_SPAWNED
@@ -108,6 +166,7 @@ pub(super) fn line_spawn(
     mut game_data: ResMut<GameData>,
     mut panes: Query<(&mut PaneRuntime, &mut LogUi, &mut Pending)>,
     fonts: Res<Fonts>,
+    line_cells: Query<&LineCells>,
     mut texts: Query<&mut Text>,
 ) {
     let mut rng = rand::rng();
@@ -157,8 +216,16 @@ pub(super) fn line_spawn(
                 delete_wipe: 0.0,
             };
             for expired in pending.push(pending_line) {
-                if let Ok(mut text) = texts.get_mut(expired.entity) {
-                    text.0 = render_resolved_line(&expired);
+                if let Ok(cells) = line_cells.get(expired.entity) {
+                    render_resolved_line(&expired, cells, &mut texts);
+                }
+                // `Outside`/`Floor` have no cursor and never will (第3.2節:
+                // 操作できるのは焼成室だけ) -- their evicted lines are pure
+                // read-only atmosphere, never scored. Only `Kiln` can ever
+                // carry a `mark`, so only `Kiln` ever has a "correct action"
+                // for `resolve()` to check.
+                if runtime.pane != Pane::Kiln {
+                    continue;
                 }
                 let outcome = domain::resolve(expired.classification, expired.mark, expired.relief);
                 let was_mistake = outcome.corruption > 0.0;

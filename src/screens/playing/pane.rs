@@ -38,16 +38,3 @@ impl PaneRuntime {
             Timer::from_seconds(self.pane.spawn_interval_secs(phase), TimerMode::Repeating);
     }
 }
-
-/// Which pane `J`/`K`/削除/検印 currently apply to. Switched with `H`
-/// (toward 外) / `L` (toward 焼成室) -- see `super::input::handle_pane_switch`.
-/// The other two panes keep scrolling and resolving while unselected;
-/// nothing pauses just because it's off-focus.
-#[derive(Resource)]
-pub(super) struct ActivePane(pub(super) Pane);
-
-impl Default for ActivePane {
-    fn default() -> Self {
-        Self(Pane::Kiln)
-    }
-}

@@ -43,42 +43,16 @@ pub fn deviation_threat_line(clock: DayClock, rng: &mut ThreadRng) -> LogLine {
     LogLine::new(text, Classification::ShouldReact)
 }
 
-/// 禁忌#2(夜の納品)・#8(裏口)共通の形: 時刻 + `{n}`入りのテンプレート +
-/// 常に`ShouldNotReact`。この2つは本文と`n`の抽選範囲が違うだけで構造は
-/// 同一なので、別々の関数に複製しない。
-fn timestamped_taboo_line(
-    clock: DayClock,
-    body: &str,
-    n_range: std::ops::Range<u32>,
-    rng: &mut ThreadRng,
-) -> LogLine {
-    let h = clock.hour();
-    let m = even_minute_of(clock);
-    let n = rng.random_range(n_range);
-    let text = format!("{} {}", timestamp(h, m), fill_n(body, n));
-    LogLine::new(text, Classification::ShouldNotReact)
-}
-
-/// 禁忌#2(夜の納品): 深夜便を受け取ったという焼成室の記録。噂を聞くまで
-/// は `generate::weights_for` 側でこのバケットの重みが0なので、この関数
-/// 自体そもそも呼ばれない -- 聞いた後、夜の時間帯にだけ現れる。
+/// 禁忌#2(夜の納品)専用の形: 時刻 + `{n}`入りのテンプレート + 常に
+/// `ShouldNotReact`。焼成室以外にはもう反応禁止型の脅威がないため
+/// (2026-07-21、`Outside`/`Floor`固有だった#7・#8は削除済み。CLAUDE.md
+/// §9参照)、汎用ヘルパーとしては残していない -- 今後また同じ形の脅威が
+/// 増えたら、その時点で切り出す。
 pub fn night_delivery_threat_line(clock: DayClock, rng: &mut ThreadRng) -> LogLine {
-    timestamped_taboo_line(clock, "深夜便の配達を{n}件 受け取った", 1..10, rng)
-}
-
-/// 禁忌#8(裏口): 誰かが裏口の様子を見に行ったという、外画面の定点報告。
-pub fn back_door_threat_line(clock: DayClock, rng: &mut ThreadRng) -> LogLine {
-    timestamped_taboo_line(clock, "裏口の様子を{n}回 確認しに行った", 1..5, rng)
-}
-
-/// 禁忌#7(閉店時間): 客が閉店時間を尋ねてくる、売り場の応対記録の体裁。
-/// `{n}`を持たないので`timestamped_taboo_line`は使わない(空の範囲を渡す
-/// ためだけの`rng`を要求するのは無駄なコード)が、時刻を付けるのは他の
-/// 売り場行と同じ -- 抜けていたのは単なる漏れで、意図した違いではない。
-pub fn closing_time_threat_line(clock: DayClock) -> LogLine {
     let h = clock.hour();
     let m = even_minute_of(clock);
-    let text = format!("{} お客様が「閉店は何時ですか」とお尋ねになりました", timestamp(h, m));
+    let n = rng.random_range(1..10);
+    let text = format!("{} {}", timestamp(h, m), fill_n("深夜便の配達を{n}件 受け取った", n));
     LogLine::new(text, Classification::ShouldNotReact)
 }
 
@@ -102,20 +76,5 @@ mod tests {
         let line = night_delivery_threat_line(DayClock::at(23, 0), &mut rng);
         assert_eq!(line.classification, Classification::ShouldNotReact);
         assert!(line.text.starts_with("23:"));
-    }
-
-    #[test]
-    fn closing_time_threat_line_is_should_not_react_and_carries_a_timestamp() {
-        let line = closing_time_threat_line(DayClock::at(15, 30));
-        assert_eq!(line.classification, Classification::ShouldNotReact);
-        assert!(line.text.starts_with("15:30"));
-    }
-
-    #[test]
-    fn back_door_threat_line_is_should_not_react_and_carries_a_timestamp() {
-        let mut rng = rand::rng();
-        let line = back_door_threat_line(DayClock::at(3, 0), &mut rng);
-        assert_eq!(line.classification, Classification::ShouldNotReact);
-        assert!(line.text.starts_with("03:"));
     }
 }

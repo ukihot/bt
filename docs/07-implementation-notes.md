@@ -28,11 +28,11 @@ src/
     ├── title.rs      # 名前入力画面
     ├── lost.rs       # 侵食ログ演出→タイトルへ
     └── playing/
-        ├── pane.rs       # PaneRuntime(画面ごとのspawn_timer等), ActivePane
+        ├── pane.rs       # PaneRuntime(画面ごとのspawn_timer等)
         ├── pending.rs    # Pending — カーソル窓とeviction
-        ├── render.rs     # 状態→表示テキストの変換、wipe()アニメーション
+        ├── render.rs     # 状態→表示テキストの変換、per-cell wipe()アニメーション
         ├── spawn.rs      # phase_tick, line_spawn — 行生成・遅延判定の駆動
-        ├── input.rs      # H/L/J/K/Z/X の入力処理
+        ├── input.rs      # J/K/Z/X の入力処理(常に焼成室のみ)
         ├── intrusion.rs  # 呼ばれる専用の不可触スロット
         ├── pause.rs      # ESC一時停止(AppState遷移ではなくVisibility切替)
         ├── glitch.rs     # CRTグリッチ(環境演出のみ)
@@ -40,45 +40,50 @@ src/
         └── setup.rs      # UIツリーの構築・破棄
 ```
 
-## 既知の重大な差分: 操作対象の範囲(§3 再設計 vs §10 実装)
+## 解消済み: 操作対象の範囲(§3 再設計 vs §10 実装)
 
-`CLAUDE.md` §3.1〜§3.2(2026-07-17再設計)は明確にこう定めている:
+`CLAUDE.md` §3.1〜§3.2(2026-07-17再設計)はこう定めている:
 
 > 操作できるのは焼成室だけ。カーソル(J/K)と削除・検印(Z/X)はすべて焼成室のログに対しての
 > み作用する。外・売り場に操作対象は存在せず、**画面を切り替えるという概念自体がない**
 
-しかし実装(`src/screens/playing/{pane,input,setup}.rs`)は再設計前のアーキテクチャのままで、
-これと食い違う:
+以前は実装(`src/screens/playing/{pane,input,setup}.rs`)がこの再設計より前のアーキテクチャの
+ままで、`ActivePane`リソース・`H`/`L`によるパネル切り替え・外/売り場固有のカーソル窓が実在し、
+プレイヤーが外や売り場のログにもカーソルを合わせて削除/検印できてしまう状態だった。
 
-- `ActivePane`(`pane.rs:47`)という「今どの画面が操作対象か」を保持するリソースが存在する
-- `handle_pane_switch`(`input.rs:22`)が `H`/`L` キーで `Pane::Outside`/`Floor`/`Kiln` の
-  3画面すべてを巡回的に切り替えられる(`domain::pane::ORDER`)
-- `spawn_pane`(`setup.rs:25`)は3画面すべてに `Pending` コンポーネントを付与しており、外・
-  売り場にも独自のカーソル窓・削除/検印マークの仕組みが実在する
-- 画面下部の凡例(`setup.rs:201`)にも `"画面切替 H/L"` が明示されている
+**2026-07-21、この差分を解消した:**
 
-つまり現状のビルドでは、プレイヤーは外や売り場のログにもカーソルを合わせて削除/検印できて
-しまう。`CLAUDE.md` はこれを §9 で「未着手の技術的負債」として明記済み — 新規に見つかった
-問題ではなく、既知のギャップとして扱ってよい。修正するとすれば、`ActivePane` を廃止して
-`Pending`/`handle_line_input` を焼成室専用に固定し、`H`/`L` の入力ハンドラごと削除する形になる。
+- `ActivePane` リソース・`handle_pane_switch`・`H`/`L` の入力ハンドラを削除。`handle_line_input`
+  は常に焼成室の `Pending` だけを操作する
+- パネル見出しの選択表示(`PaneHeader`/`sync_pane_headers`)を削除し、焼成室にだけ常時
+  `CURSOR_MARK` を立てる静的な見出しに置き換えた(`setup.rs`)
+- 画面下部の凡例から `"画面切替 H/L"` を削除
+- `Outside`/`Floor` は `Pending`(カーソル窓・eviction)自体は引き続き持つが(表示上必要な
+  仕組みのため)、行が `Pending` から外れても `domain::resolve()` を一切呼ばなくなった
+  (`spawn.rs::line_spawn`)——呼んでしまうと、操作不能なこの2画面の`mark`は常に`None`のため、
+  「正解」がある分類は必ずタタリと判定されてしまう
+- ドメイン層(`domain::rumors`/`threats`/`generate`)から、`Outside`/`Floor` 固有だった反応型
+  脅威(`ThreatKind::OutsideRepeat`/`ClosingTime`/`BackDoor`、禁忌#7〜#9)と、それらに紐づく
+  禁忌集の該当項目、および禁忌#8を対象にしていた `Effect::Discredit` を削除した——詳細は
+  [04-rules-and-rumors.md](04-rules-and-rumors.md#2026-07-21-の設計変更実装済み-操作対象の範囲)
+  [05-threats-and-tells.md](05-threats-and-tells.md) 参照
 
 ## `CLAUDE.md` §9 に記載済みの未確定事項(参考として集約)
 
-- 禁忌集の全項目リストと解放順(現状11項目で打ち止め、増量時の設計は未検討)
+- 禁忌集の全項目リストと解放順(現状7項目で打ち止め、増量時の設計は未検討)
 - 脅威図鑑:「どう書くか」ベースの書き分け一覧は未整理
 - 経済パラメータ(売上と侵食率のバランス)— `income` は内部計算のみでUI・corruptionへの
   フィードバックなし
 - 売り場発ルール変更の語彙集の網羅性、同時に有効なルール数の上限
 - 外のステータス表示のエスカレーション閾値(25/50/75)と語彙は第一稿、数値調整は未実施
-- `Condition` は `DayHasThree` の1種、`Effect` も4種のみ — 禁忌集が増えたときにこの表現力で
+- `Condition` は `DayHasThree` の1種、`Effect` も3種のみ — 禁忌集が増えたときにこの表現力で
   足りるかは未検証
 - 客ごとのトーン・語調変化(`Customer` は名前のみ、個性づけは未実装)
 - 噂が使う時間帯語彙(朝・午後・夕方等)と `Phase::hour_range()` との対応表の具体的な区切り
 - 仮題「Bakery Text」の正式決定
-- 上記「操作対象の範囲」の実装追従そのもの
-- **禁忌同士の絡み合い(discredit連鎖等)の強化**(2026-07-20方針決定、カタログ未反映)。
-  `Effect::Discredit` は現状1組(項目9→項目7)のみ。詳細は
-  [04-rules-and-rumors.md](04-rules-and-rumors.md#未実装方向性のみ決定の項目) 参照
+- **禁忌同士の絡み合い(discredit型等)の強化。** 方向性の検討のみで実装は0件(2026-07-21、
+  唯一の実例だった`Effect::Discredit`を機構ごと削除——詳細は
+  [04-rules-and-rumors.md](04-rules-and-rumors.md#未実装方向性のみ決定の項目) 参照)
 
 ## 2026-07-20 実装済みの大きな変更
 
@@ -100,6 +105,6 @@ src/
 
 `src/domain/` 配下は Bevy の `Component`/`Resource`/systems を一切持たないため、`cargo test`
 だけで単体テストできる。各ファイルに `#[cfg(test)] mod tests` があり、`resolve()` の全分岐、
-`RuleLedger::verdict` の優先順位・discredit の非連鎖、`DayClock` の非後退性、`Pending` の
-eviction/cursor追従などがカバーされている。ECS層(`screens/`)側は `Pending`/`render::wipe`/
+`RuleLedger::verdict` の優先順位、`DayClock` の非後退性、`Pending` の eviction/cursor追従
+などがカバーされている。ECS層(`screens/`)側は `Pending`/`render::body_glyphs`/`mark_glyph`/
 `pause` の純粋関数部分のみ単体テストがあり、systems 自体の統合テストは現状ない。
