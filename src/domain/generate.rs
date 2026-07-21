@@ -404,7 +404,12 @@ fn repeated_line(
 /// (検印が正解か削除が正解か)だけで、見た目には一切出ない。旗揚げゲームの
 /// 「赤上げて、白上げて」そのままに、品目ごとに違う既定値と、噂で個別に
 /// 上書きされた履歴を、プレイヤー自身が覚えておく必要がある。
-fn item_miscount_line(clock: DayClock, ledger: &RuleLedger, day: u32, rng: &mut ThreadRng) -> LogLine {
+fn item_miscount_line(
+    clock: DayClock,
+    ledger: &RuleLedger,
+    day: u32,
+    rng: &mut ThreadRng,
+) -> LogLine {
     let item = ITEM_POOL[rng.random_range(0..ITEM_POOL.len())];
     let h = clock.hour();
     let m = even_minute_of(clock);
@@ -453,8 +458,7 @@ pub fn generate(
         // `weights_for` が `taboo_event` を焼成室以外では常に0にしている
         // ので、ここに来るのも常に `Pane::Kiln`。
         night_delivery_threat_line(clock, rng)
-    } else if roll < w.normal + w.rumor + w.deviation + w.repeat + w.taboo_event + w.item_miscount
-    {
+    } else if roll < w.normal + w.rumor + w.deviation + w.repeat + w.taboo_event + w.item_miscount {
         // `weights_for` が `item_miscount` を焼成室以外では常に0にしている
         // ので、ここに来るのも常に `Pane::Kiln`。
         item_miscount_line(clock, ledger, day, rng)

@@ -242,7 +242,10 @@ mod tests {
     #[test]
     fn enabling_one_item_s_miscount_does_not_enable_another_s() {
         let enable_croissant = find(|e| {
-            matches!(e, Effect::Enable { threat: ThreatKind::ItemMiscount(ItemKind::Croissant), .. })
+            matches!(
+                e,
+                Effect::Enable { threat: ThreatKind::ItemMiscount(ItemKind::Croissant), .. }
+            )
         });
         let ledger = hear_all(RuleLedger::new(), &[enable_croissant]);
         assert_eq!(
